@@ -47,7 +47,7 @@ struct SetupView: View {
                     .font(.title2.weight(.semibold))
                     .foregroundStyle(Theme.textPrimary)
 
-                Text("Use your router’s DHCP DNS settings so devices on your network send DNS to NetSentrix on this Mac.")
+                Text("Point your router’s DHCP DNS at this Mac so LAN devices use NetSentrix as their resolver. The app can only observe and filter DNS that actually reaches this engine — not traffic that bypasses it.")
                     .font(.callout)
                     .foregroundStyle(Theme.textSecondary)
 
@@ -125,7 +125,7 @@ struct SetupView: View {
                     Text("Reachable (v\(h.version))")
                         .foregroundStyle(Theme.allowed)
                 }
-                Text("The control API on this Mac can talk to NetSentrix Core.")
+                Text("The control API on this Mac can talk to NetSentrix Core. If the app cannot save settings, the token file on disk must match the engine’s path (see Advanced).")
                     .font(.caption)
                     .foregroundStyle(Theme.textSecondary)
             } else if let err = engine.healthFetchError {
@@ -163,33 +163,89 @@ struct SetupView: View {
     }
 
     private func verificationBlock(snap: ProductStatusSnapshot) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if !engine.hasCompletedInitialStatsFetch || !engine.hasCompletedInitialQueriesFetch {
-                Text("Checking DNS traffic…")
+        VStack(alignment: .leading, spacing: 10) {
+            if !engine.hasCompletedInitialHealthFetch {
+                Text("Waiting for engine…")
                     .foregroundStyle(Theme.textSecondary)
-            } else if let s = engine.lastStats {
-                if s.totalQueries > 0 {
-                    Text("DNS queries are reaching NetSentrix.")
-                        .foregroundStyle(Theme.allowed)
-                    Text("Seen \(s.distinctDevices) device(s) in stats; last activity is reflected on the Dashboard.")
-                        .font(.caption)
-                        .foregroundStyle(Theme.textSecondary)
-                } else {
-                    Text("No DNS queries detected yet.")
-                        .foregroundStyle(Theme.warning)
-                    Text("After router DNS points here, reconnect Wi‑Fi or renew DHCP on a device, then wait a minute.")
-                        .font(.caption)
-                        .foregroundStyle(Theme.textSecondary)
-                }
-            } else {
-                Text("Couldn’t load verification stats.")
-                    .foregroundStyle(Theme.textSecondary)
-            }
-            if snap.traffic == .receiving {
-                Label("Traffic: receiving DNS through NetSentrix", systemImage: "checkmark.circle.fill")
+            } else if let h = engine.lastHealth, let v = snap.verification {
+                Text("Engine verification window: \(formatWindowMins(v.windowSecs)) (rolling). Counts are LAN clients only (loopback / localhost test queries excluded).")
                     .font(.caption)
-                    .foregroundStyle(Theme.allowed)
+                    .foregroundStyle(Theme.textSecondary)
+
+                let udpOk = h.dnsUdpBound ?? h.dnsBound
+                if let tcp = h.dnsTcpBound {
+                    HStack(spacing: 12) {
+                        Label(udpOk ? "UDP DNS listening" : "UDP not bound", systemImage: udpOk ? "checkmark.circle.fill" : "xmark.circle.fill")
+                            .font(.caption)
+                            .foregroundStyle(udpOk ? Theme.allowed : Theme.blocked)
+                        Label(tcp ? "TCP DNS listening" : "TCP not bound", systemImage: tcp ? "checkmark.circle.fill" : "xmark.circle.fill")
+                            .font(.caption)
+                            .foregroundStyle(tcp ? Theme.allowed : Theme.warning)
+                    }
+                } else {
+                    Label(udpOk ? "UDP DNS listening" : "UDP not bound", systemImage: udpOk ? "checkmark.circle.fill" : "xmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(udpOk ? Theme.allowed : Theme.blocked)
+                }
+
+                LabeledContent("Distinct LAN clients (window)") {
+                    Text("\(v.distinctLanClients)").font(.body.monospaced())
+                }
+                LabeledContent("LAN DNS lookups (window)") {
+                    Text("\(v.lanQueriesInWindow)").font(.body.monospaced())
+                }
+                if let t = v.lastLanQueryMs {
+                    LabeledContent("Last LAN client DNS") {
+                        Text(ProductStatusAdapter.formattedRelativeTime(epochMs: t))
+                    }
+                } else {
+                    Text("No LAN client DNS logged yet (only loopback or no queries).")
+                        .font(.caption)
+                        .foregroundStyle(Theme.warning)
+                }
+
+                Text(partialVsActiveHint(v: v))
+                    .font(.caption)
+                    .foregroundStyle(Theme.textSecondary)
+                    .padding(.top, 2)
+
+                if snap.traffic == .receiving {
+                    Label("Traffic: LAN or logged DNS activity in scope", systemImage: "checkmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(Theme.allowed)
+                }
+            } else if !engine.hasCompletedInitialStatsFetch {
+                Text("Loading stats…")
+                    .foregroundStyle(Theme.textSecondary)
+            } else if engine.lastStats != nil {
+                Text("Protection summary not available from this engine — update NetSentrix Core for LAN-specific verification.")
+                    .font(.caption)
+                    .foregroundStyle(Theme.warning)
+            } else {
+                Text("Couldn’t load verification data.")
+                    .foregroundStyle(Theme.textSecondary)
             }
+        }
+    }
+
+    private func formatWindowMins(_ secs: UInt64) -> String {
+        let m = secs / 60
+        if m >= 60, m % 60 == 0 { return "\(m / 60) hour(s)" }
+        if m >= 60 { return "\(m / 60) h \(m % 60) min" }
+        return "\(m) min"
+    }
+
+    private func partialVsActiveHint(v: ProtectionVerification) -> String {
+        switch v.protectionState {
+        case "active":
+            return "Active means recent LAN client DNS in this window with DNS bound on a non-loopback address. It does not mean every device on the network is forced through NetSentrix — DoH, DoT, or static DNS can bypass."
+        case "partial":
+            if !v.lanCapable {
+                return "Partial: DNS may be bound to loopback only, so other devices cannot reach this resolver — or LAN traffic has not appeared in the window yet."
+            }
+            return "Partial: DNS is LAN-reachable, but the engine has not seen enough recent LAN client queries in the window to report Active."
+        default:
+            return "Not Active: fix engine/DNS errors or pause state first, then revisit router DHCP DNS."
         }
     }
 
@@ -219,11 +275,28 @@ struct SetupView: View {
         if let h = engine.lastHealth {
             LabeledContent("API listen") { Text(h.apiListen).font(.caption.monospaced()) }
             LabeledContent("DNS listen") { Text(h.dnsListen).font(.caption.monospaced()) }
-            if let tok = h.apiTokenFile {
-                Text("API token path: \(tok)")
-                    .font(.caption2)
-                    .foregroundStyle(Theme.textSecondary)
+            LabeledContent("Engine status") { Text(h.engineStatus).font(.caption.monospaced()) }
+            LabeledContent("DNS UDP") {
+                Text((h.dnsUdpBound ?? h.dnsBound) ? "bound" : "not bound").font(.caption)
             }
+            LabeledContent("DNS TCP") {
+                Text(h.dnsTcpBound.map { $0 ? "bound" : "not bound" } ?? "unknown").font(.caption)
+            }
+            if let p = h.configPath {
+                LabeledContent("Config file") { Text(p).font(.caption2).textSelection(.enabled) }
+            }
+            if let p = h.netsentrixDataDir {
+                LabeledContent("NetSentrix data dir") { Text(p).font(.caption2).textSelection(.enabled) }
+            }
+            if let p = h.dbPath {
+                LabeledContent("Database") { Text(p).font(.caption2).textSelection(.enabled) }
+            }
+            if let tok = h.apiTokenFile {
+                LabeledContent("API token file") { Text(tok).font(.caption2).textSelection(.enabled) }
+            }
+            Text("Unreachable means the HTTP API did not respond; not bound means DNS listeners failed while the API may still be up — check UDP/TCP errors above.")
+                .font(.caption2)
+                .foregroundStyle(Theme.textSecondary)
         }
     }
 }

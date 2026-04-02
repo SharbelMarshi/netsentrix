@@ -13,7 +13,7 @@ pub struct AlertRow {
     pub details_json: Option<String>,
 }
 
-/// Insert a row (e.g. future detection pipeline). Not used by shipping DNS path; schema only.
+/// Insert a row. Called from DNS post-query evaluation (`alerts::minimal`) when thresholds fire.
 pub fn insert(
     conn: &Connection,
     timestamp_ms: i64,

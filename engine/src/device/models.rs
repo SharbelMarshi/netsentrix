@@ -1,6 +1,4 @@
-use serde::Serialize;
-
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone)]
 pub struct DeviceRow {
     pub id: String,
     pub ip_address: String,

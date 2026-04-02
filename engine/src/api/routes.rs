@@ -9,7 +9,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::api::models::{
-    settings_from_config, ApiEnvelope, DevicePatchBody, HealthResponse, PatternBody,
+    settings_from_config, ApiEnvelope, DevicePatchBody, DeviceResponse, HealthResponse, PatternBody,
     ProtectionSummary, SettingsPatch, StatsResponse,
 };
 use crate::api::protection;
@@ -20,6 +20,13 @@ use crate::storage::{alerts, devices, queries};
 pub struct QueriesParams {
     pub limit: Option<u32>,
     pub before_id: Option<i64>,
+}
+
+fn epoch_ms_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 pub async fn health(State(state): State<Arc<AppState>>) -> Json<HealthResponse> {
@@ -40,11 +47,12 @@ pub async fn health(State(state): State<Arc<AppState>>) -> Json<HealthResponse> 
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0);
+    // Last DNS log from a non-loopback client (ip:… excluding 127.* / ::1), not localhost-only tests.
     let last_client_query_ms = state
         .db
         .lock()
         .ok()
-        .and_then(|conn| queries::latest_timestamp_ms(&conn).ok().flatten());
+        .and_then(|conn| queries::latest_non_loopback_lan_timestamp_ms(&conn).ok().flatten());
     let window_ms = (cfg.dns.protection_activity_window_secs.saturating_mul(1000)) as i64;
     let recent_client_activity = last_client_query_ms
         .map(|t| now_ms.saturating_sub(t) < window_ms)
@@ -82,6 +90,11 @@ pub async fn health(State(state): State<Arc<AppState>>) -> Json<HealthResponse> 
         recent_client_activity,
         dns_paused: state.dns_paused.load(Ordering::Relaxed),
         protection,
+        config_path: state.config_path.display().to_string(),
+        netsentrix_data_dir: crate::system::paths::netsentrix_app_dir()
+            .display()
+            .to_string(),
+        db_path: cfg.storage.db_path.display().to_string(),
     })
 }
 
@@ -127,6 +140,10 @@ pub async fn stats(State(state): State<Arc<AppState>>) -> impl IntoResponse {
         0.0
     };
     let (dns_cache_hits, dns_cache_misses) = state.dns_cache.metrics();
+    let lat = queries::aggregate_latency(&conn).unwrap_or(queries::LatencyAggregate {
+        avg_latency_ms: None,
+        latency_sample_count: 0,
+    });
     let body = StatsResponse {
         total_queries: q.total_queries,
         blocked_queries: q.blocked_queries,
@@ -137,6 +154,8 @@ pub async fn stats(State(state): State<Arc<AppState>>) -> impl IntoResponse {
         alerts_last_24h,
         dns_cache_hits,
         dns_cache_misses,
+        dns_avg_latency_ms: lat.avg_latency_ms,
+        dns_latency_sample_count: lat.latency_sample_count,
     };
     Json(ApiEnvelope::ok(body)).into_response()
 }
@@ -389,8 +408,15 @@ pub async fn list_devices(State(state): State<Arc<AppState>>) -> impl IntoRespon
                 .into_response();
         }
     };
-    match devices::list_all(&conn) {
-        Ok(rows) => Json(ApiEnvelope::ok(rows)).into_response(),
+    let now_ms = epoch_ms_now();
+    match devices::list_with_query_stats(&conn, now_ms) {
+        Ok(rows) => {
+            let out: Vec<DeviceResponse> = rows
+                .into_iter()
+                .map(|(row, total, h24)| DeviceResponse::from_parts(row, total, h24, now_ms))
+                .collect();
+            Json(ApiEnvelope::ok(out)).into_response()
+        }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ApiEnvelope::err("sqlite", e.to_string())),
@@ -413,8 +439,11 @@ pub async fn get_device(
                 .into_response();
         }
     };
-    match devices::get(&conn, &id) {
-        Ok(Some(d)) => Json(ApiEnvelope::ok(d)).into_response(),
+    let now_ms = epoch_ms_now();
+    match devices::get_with_query_stats(&conn, &id, now_ms) {
+        Ok(Some((row, total, h24))) => {
+            Json(ApiEnvelope::ok(DeviceResponse::from_parts(row, total, h24, now_ms))).into_response()
+        }
         Ok(None) => (StatusCode::NOT_FOUND, Json(ApiEnvelope::err("not_found", id))).into_response(),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,

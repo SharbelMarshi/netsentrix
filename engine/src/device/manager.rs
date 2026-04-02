@@ -1,4 +1,7 @@
 //! Register devices from observed DNS clients.
+//!
+//! Upserts set `is_protected = 0` and only touch IP / seen timestamps — there is no per-device policy
+//! in the DNS MVP; API consumers should not treat `is_protected` as meaningful yet.
 
 use rusqlite::Connection;
 

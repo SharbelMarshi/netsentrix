@@ -29,6 +29,16 @@ enum ProductSetupState: String {
     case needsAttention = "Needs Attention"
 }
 
+/// LAN-focused proof fields from engine `protection` (non-loopback clients only).
+struct ProtectionVerification: Sendable {
+    let windowSecs: UInt64
+    let distinctLanClients: Int64
+    let lanQueriesInWindow: Int64
+    let lastLanQueryMs: Int64?
+    let protectionState: String
+    let lanCapable: Bool
+}
+
 struct ProductStatusSnapshot: Sendable {
     let engine: ProductEngineState
     let protection: ProductProtectionState
@@ -45,6 +55,8 @@ struct ProductStatusSnapshot: Sendable {
     let engineTitle: String
     /// Plain-language DNS / listener summary for primary UI.
     let dnsSummaryPrimary: String
+    /// Present when `GET /health` includes `protection` — use for Setup / Dashboard proof lines.
+    let verification: ProtectionVerification?
 }
 
 enum ProductStatusAdapter {
@@ -89,6 +101,17 @@ enum ProductStatusAdapter {
             totalQueries: totalQ
         )
 
+        let verification: ProtectionVerification? = health?.protection.map { p in
+            ProtectionVerification(
+                windowSecs: p.windowSeconds,
+                distinctLanClients: p.distinctClientsInWindow,
+                lanQueriesInWindow: p.lanQueryCountInWindow ?? 0,
+                lastLanQueryMs: p.lastQueryMs,
+                protectionState: p.state.lowercased(),
+                lanCapable: p.lanCapable
+            )
+        }
+
         let (setup, sReason, sNext) = resolveSetup(
             health: health,
             healthFetchFailed: healthFetchFailed,
@@ -123,7 +146,8 @@ enum ProductStatusAdapter {
             setupReason: sReason,
             setupNextStep: sNext,
             engineTitle: engineTitle,
-            dnsSummaryPrimary: dnsSummaryPrimary
+            dnsSummaryPrimary: dnsSummaryPrimary,
+            verification: verification
         )
     }
 
@@ -147,11 +171,11 @@ enum ProductStatusAdapter {
         if let p = protection, p.state.lowercased() == "active" {
             return .receiving
         }
-        if totalQueries > 0 { return .receiving }
-        if health?.recentClientActivity == true { return .receiving }
-        if let p = protection, p.distinctClientsInWindow > 0 {
+        if let p = protection, p.distinctClientsInWindow > 0 || (p.lanQueryCountInWindow ?? 0) > 0 {
             return .receiving
         }
+        if health?.recentClientActivity == true { return .receiving }
+        if totalQueries > 0 { return .receiving }
         return .noneYet
     }
 
@@ -163,7 +187,8 @@ enum ProductStatusAdapter {
         case "dns_not_bound": return "DNS is not listening, so clients cannot use this resolver."
         case "dns_paused": return "DNS answering is paused; clients receive errors instead of filtered DNS."
         case "listen_loopback_only": return "DNS is bound to loopback only — network devices cannot reach it."
-        case "no_recent_lan_queries": return "No recent DNS queries from LAN clients were seen in the verification window."
+        case "no_recent_lan_queries":
+            return "No recent DNS from LAN clients (non-loopback) in the verification window — DHCP DNS may not point here yet, or leases haven’t renewed."
         case "db_unavailable": return "Could not read verification data from the engine database."
         default: return "Code: \(code)"
         }
@@ -182,7 +207,8 @@ enum ProductStatusAdapter {
         } else if p.reasons.contains("dns_paused") {
             next = "Call POST /dns/resume on the engine API to resume normal DNS."
         } else if p.state.lowercased() == "active" {
-            next = "Devices using plain DNS on your LAN are filtered here. DoH/DoT and per-device DNS can still bypass this."
+            next =
+                "Applies to clients using this Mac as DNS (plain DNS on the LAN). Not every device is guaranteed — DoH, DoT, or manual DNS can bypass this resolver."
         }
         if let msg = health?.dnsLastError, !msg.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
            p.reasons.contains("dns_not_bound") || p.reasons.contains("engine_error") {
@@ -237,11 +263,22 @@ enum ProductStatusAdapter {
         if !dnsBound {
             return (.notActive, "NetSentrix is not protecting your network yet — DNS isn’t listening on the configured interface.", "Fix DNS bind (permissions/port) in engine config, then finish router setup.")
         }
+        if running && dnsBound && health?.recentClientActivity == true {
+            return (
+                .active,
+                "Recent LAN DNS through NetSentrix within the engine window (see Setup for counts).",
+                "Applies to clients using this resolver — not proof that the entire network is filtered."
+            )
+        }
         if running && dnsBound && totalQueries > 0 {
-            return (.active, "Protection is active — DNS traffic is flowing through NetSentrix.", nil)
+            return (
+                .partial,
+                "DNS is answering and queries are logged; LAN-specific proof may be missing or outside the window.",
+                "Prefer the engine protection line when available; point router DHCP DNS here and renew leases."
+            )
         }
         if running && dnsBound && totalQueries == 0 {
-            return (.partial, "Protection is partial — the engine is ready, but no DNS queries have been detected yet.", "Configure your router’s DHCP DNS to this Mac’s IP (Setup), renew leases, then wait for activity.")
+            return (.partial, "The engine is ready, but no DNS queries are logged yet.", "Configure your router’s DHCP DNS to this Mac’s IP (Setup), renew leases, then wait for activity.")
         }
         return (.notActive, "Protection isn’t active yet.", "Open Setup to finish activating protection.")
     }
@@ -267,8 +304,8 @@ enum ProductStatusAdapter {
         if let p = protection, p.state.lowercased() == "active" {
             return (
                 .complete,
-                "Engine reports active protection — LAN clients are using NetSentrix for DNS in the verification window.",
-                "Remember: DoH/DoT or manual DNS on a device can still bypass filtering."
+                "Engine reports Active: recent LAN DNS (non-loopback) in your verification window, with DNS listening on a LAN-reachable address.",
+                "This is evidence for clients using this resolver — not a guarantee for every device. DoH, DoT, or static DNS can still bypass NetSentrix."
             )
         }
         if dnsPaused {
@@ -284,8 +321,26 @@ enum ProductStatusAdapter {
         if stopped {
             return (.needsAttention, "The engine is stopped.", "Start the engine, then continue router DNS setup.")
         }
+        if let p = protection, p.state.lowercased() == "partial" {
+            return (
+                .incomplete,
+                "Engine reports Partial — LAN-reachable DNS without enough recent LAN client evidence in the window for Active.",
+                "Use Setup verification (distinct LAN clients, lookups, last LAN DNS). Finish router DHCP DNS if needed."
+            )
+        }
+        if dnsBound, health?.recentClientActivity == true {
+            return (
+                .complete,
+                "Recent LAN client DNS in the engine’s verification window.",
+                "If you expect more devices, confirm router DHCP DNS and lease renewal. Localhost-only tests do not count as LAN proof."
+            )
+        }
         if dnsBound && totalQueries > 0 {
-            return (.complete, "Router DNS appears in use — queries are reaching NetSentrix.", nil)
+            return (
+                .incomplete,
+                "DNS is up and the log has queries, but there is no recent LAN client activity in the verification window (or traffic may be local-only).",
+                "Set router DHCP DNS to this Mac, renew leases, and wait — see Setup verification for distinct LAN clients."
+            )
         }
         if dnsBound && totalQueries == 0 {
             return (.incomplete, "The engine is listening, but no queries have been logged.", "Point DHCP DNS at this host and reconnect devices (see Setup steps).")
@@ -342,5 +397,54 @@ enum ProductStatusAdapter {
         default:
             return raw
         }
+    }
+
+    // MARK: - DNS cache & performance (stats)
+
+    static func dnsCacheHitRatePercent(hits: UInt64?, misses: UInt64?) -> Double? {
+        guard let h = hits, let m = misses else { return nil }
+        let t = h + m
+        guard t > 0 else { return nil }
+        return Double(h) / Double(t) * 100.0
+    }
+
+    static func dnsCacheLookupsTotal(hits: UInt64?, misses: UInt64?) -> UInt64 {
+        guard let h = hits, let m = misses else { return 0 }
+        return h + m
+    }
+
+    /// Short headline for hit rate + qualitative label.
+    static func dnsCacheHeadline(hitRatePercent: Double?, lookupsTotal: UInt64) -> String {
+        guard lookupsTotal > 0, let p = hitRatePercent else {
+            return "No cache lookups recorded yet"
+        }
+        if lookupsTotal < 15 {
+            return String(format: "%.0f%% hit rate (early sample)", min(100, max(0, p)))
+        }
+        if p >= 70 {
+            return String(format: "%.0f%% hit rate — high cache efficiency", p)
+        }
+        if p >= 35 {
+            return String(format: "%.0f%% hit rate — moderate cache use", p)
+        }
+        return String(format: "%.0f%% hit rate — low cache usage", p)
+    }
+
+    static func dnsCacheExplanation(lookupsTotal: UInt64) -> String {
+        if lookupsTotal == 0 {
+            return "Counters reset when the engine starts. Hit rate shows how often repeated questions are answered from the in-memory cache instead of upstream."
+        }
+        return "Higher hit rates mean less upstream work for repeat names. Misses are normal for new or rarely seen domains."
+    }
+
+    /// Human line for DB-backed average latency, or nil when no samples (do not invent a number).
+    static func dnsLatencyExplanation(avgMs: Double?, sampleCount: Int64) -> String? {
+        guard sampleCount > 0, let avg = avgMs, avg >= 0 else { return nil }
+        let r = (avg * 10).rounded() / 10
+        return String(
+            format: "%.1f ms average from %lld logged upstream answers (timing is not stored for every path; cache hits are often unmeasured here).",
+            r,
+            sampleCount
+        )
     }
 }

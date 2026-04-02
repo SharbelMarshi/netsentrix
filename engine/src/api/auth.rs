@@ -1,5 +1,3 @@
-use std::path::PathBuf;
-
 use axum::body::Body;
 use axum::http::{header, Request, StatusCode};
 use axum::middleware::Next;
@@ -7,9 +5,10 @@ use axum::response::Response;
 use rand::Rng;
 
 use crate::api::AppState;
+use crate::system::paths;
 
 pub fn load_or_create_token() -> anyhow::Result<String> {
-    let path = token_path();
+    let path = paths::token_path();
     if path.exists() {
         let s = std::fs::read_to_string(&path)?;
         let t = s.trim();
@@ -27,11 +26,9 @@ pub fn load_or_create_token() -> anyhow::Result<String> {
     Ok(token)
 }
 
-pub fn token_path() -> PathBuf {
-    dirs::data_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("NetSentrix")
-        .join("api.token")
+/// Resolved token path (same rules as [`crate::system::paths::token_path`]).
+pub fn token_path() -> std::path::PathBuf {
+    paths::token_path()
 }
 
 /// Require `Authorization: Bearer <token>` for every request on the authed router

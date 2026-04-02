@@ -1,4 +1,8 @@
-//! Authoritative network protection summary for UI (engine is source of truth).
+//! Authoritative protection summary for UI (engine is source of truth).
+//!
+//! **LAN proof:** `last_query_ms`, `distinct_clients_in_window`, and `lan_query_count_in_window` use
+//! **non-loopback** `device_id` rows only (see `storage::queries::NON_LOOPBACK_LAN_DEVICE_SQL`) so localhost
+//! tests do not inflate “network” activity.
 
 use std::net::SocketAddr;
 
@@ -27,9 +31,10 @@ pub fn compute(
     let dns_listen = cfg.dns.listen_addr.to_string();
     let lan_capable = listen_addr_lan_capable(cfg.dns.listen_addr);
 
-    let last_query_ms = queries::latest_timestamp_ms(conn).ok().flatten();
+    let last_query_ms = queries::latest_non_loopback_lan_timestamp_ms(conn).ok().flatten();
     let distinct_clients_in_window = queries::count_distinct_non_loopback_clients_since(conn, since)
         .unwrap_or(0);
+    let lan_query_count_in_window = queries::count_lan_client_queries_since(conn, since).unwrap_or(0);
 
     let mut reasons: Vec<String> = Vec::new();
     let state = match eng {
@@ -72,6 +77,7 @@ pub fn compute(
         reasons,
         window_seconds: cfg.dns.protection_activity_window_secs,
         distinct_clients_in_window,
+        lan_query_count_in_window,
         last_query_ms,
         lan_capable,
         dns_listen,

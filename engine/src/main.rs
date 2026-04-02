@@ -1,5 +1,6 @@
 //! NetSentrix Core — config, storage, API, DNS.
 
+mod alerts;
 mod api;
 mod config;
 mod device;
@@ -36,10 +37,18 @@ async fn main() -> anyhow::Result<()> {
 
     let config_path = config::resolved_config_path();
     let initial = config::load().context("load config")?;
+    tracing::info!(
+        config_path = %config_path.display(),
+        netsentrix_data_dir = %crate::system::paths::netsentrix_app_dir().display(),
+        token_path = %crate::system::paths::token_path().display(),
+        db_path = %initial.storage.db_path.display(),
+        netsentrix_data_dir_env = ?std::env::var("NETSENTRIX_DATA_DIR").ok(),
+        "runtime paths (see engine/src/system/paths.rs for LaunchDaemon vs GUI user notes)"
+    );
     let cfg_shared = Arc::new(RwLock::new(initial.clone()));
 
     let db = storage::db::open(&initial.storage.db_path).context("open database")?;
-    storage::schema::init(&db).context("init schema")?;
+    storage::migrations::run_migrations(&db).context("run database migrations")?;
     let db_arc = Arc::new(std::sync::Mutex::new(db));
 
     let mut filter = DnsFilter::default();
@@ -86,6 +95,8 @@ async fn main() -> anyhow::Result<()> {
         dns_cache: dns_shared.cache.clone(),
     });
 
+    // API and core tasks are up; DNS bind success/failure is reported separately via GET /health
+    // (`dns_udp_bound`, `dns_tcp_bound`, `engine_status` may become `error` if UDP bind fails).
     {
         let mut g = engine_status.write().await;
         *g = EngineStatus::running();

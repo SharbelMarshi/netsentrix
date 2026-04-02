@@ -1,7 +1,7 @@
 use std::net::{Ipv4Addr, SocketAddr};
-use std::path::PathBuf;
 
 use crate::config::schema::{ApiSection, DnsCacheConfig, DnsSection, EngineConfig, StorageSection};
+use crate::system::paths;
 
 pub fn engine_config() -> EngineConfig {
     EngineConfig {
@@ -18,10 +18,7 @@ pub fn engine_config() -> EngineConfig {
             protection_activity_window_secs: 300,
         },
         storage: StorageSection {
-            db_path: dirs::data_dir()
-                .unwrap_or_else(|| PathBuf::from("."))
-                .join("NetSentrix")
-                .join("engine.db"),
+            db_path: paths::default_db_path(),
         },
     }
 }

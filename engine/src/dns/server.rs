@@ -19,6 +19,7 @@ use crate::dns::upstream;
 use crate::events::bus::EventBus;
 use crate::events::models::DnsQueryEvent;
 use crate::device::{client_key, manager};
+use crate::sniffer::models::DetectionEvent;
 use crate::storage::queries::{self, DnsQueryRow};
 
 #[derive(Debug, Default, Clone)]
@@ -64,7 +65,7 @@ pub async fn run_dns_loop(
             tracing::warn!(
                 error = %e,
                 %listen_addr,
-                "DNS UDP bind failed; idle until restart/reload"
+                "DNS UDP bind failed; engine_status=error; idle until restart/reload (see GET /health dns_last_error)"
             );
             loop {
                 sleep(Duration::from_secs(86_400)).await;
@@ -127,7 +128,11 @@ pub async fn run_dns_tcp_loop(
                 g.tcp_bound = false;
                 g.tcp_last_error = Some(e.to_string());
             }
-            tracing::warn!(error = %e, %listen_addr, "DNS TCP bind failed; idle");
+            tracing::warn!(
+                error = %e,
+                %listen_addr,
+                "DNS TCP bind failed; idling (UDP may still work; engine_status unchanged; check dns_tcp_bound on /health)"
+            );
             loop {
                 sleep(Duration::from_secs(86_400)).await;
             }
@@ -449,25 +454,34 @@ fn spawn_log(shared: &DnsLoopShared, row: DnsQueryRow) {
         let row2 = row.clone();
         let ev2 = ev.clone();
         let db2 = db.clone();
-        let j = tokio::task::spawn_blocking(move || {
+        let j = tokio::task::spawn_blocking(move || -> Vec<DetectionEvent> {
             let Ok(conn) = db2.lock() else {
                 tracing::warn!("db mutex poisoned");
-                return;
+                return Vec::new();
             };
             if let Err(e) = queries::insert(&conn, &row2) {
                 tracing::warn!(error = %e, "insert dns_queries");
+                return Vec::new();
             }
             if let Some(ref did) = row2.device_id {
                 if did.starts_with("ip:") {
                     manager::touch_seen(&conn, did, row2.timestamp_ms);
                 }
             }
+            crate::alerts::evaluate_after_query(&conn, &row2)
         })
         .await;
-        if j.is_err() {
-            tracing::warn!("log task join failed");
-        }
+        let detection_events = match j {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(error = %e, "log task join failed");
+                Vec::new()
+            }
+        };
         bus.publish_dns(ev2);
+        for ev in detection_events {
+            bus.publish_alert_triggered(ev);
+        }
     });
 }
 

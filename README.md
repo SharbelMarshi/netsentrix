@@ -19,7 +19,14 @@ Local-first network intelligence: **NetSentrix Core** (Rust engine) provides DNS
 cd engine && cargo run
 ```
 
-Default **config** path: `NETSENTRIX_CONFIG` or `<config_dir>/NetSentrix/config.toml` (macOS: typically `~/Library/Application Support/NetSentrix/config.toml` — see `docs/architecture.md`). Default **database** and **API token** also live under platform data dirs (`NetSentrix/`).
+**Runtime paths** (single MVP model — details in `engine/src/system/paths.rs`):
+
+| Item | Resolution |
+|------|------------|
+| Config | `NETSENTRIX_CONFIG` or `<config_dir>/NetSentrix/config.toml` |
+| Token + default DB layout | `NETSENTRIX_TOKEN_FILE` if set, else `NETSENTRIX_DATA_DIR/NetSentrix/api.token` if `NETSENTRIX_DATA_DIR` set, else `<data_dir>/NetSentrix/api.token` |
+
+**LaunchDaemon as root:** Without **`NETSENTRIX_DATA_DIR`**, token/DB default to **`/var/root/Library/Application Support/NetSentrix/`** while the GUI app reads **`~/Library/Application Support/NetSentrix/api.token`** — use the plist’s **`NETSENTRIX_DATA_DIR`** (see `packaging/macos/launchd/`) so both processes agree.
 
 **App**:
 
@@ -33,9 +40,9 @@ Or open `app/Package.swift` in Xcode and run the `NetSentrix` executable target.
 
 ## Status
 
-**Engine:** localhost Axum API (health + envelope routes), SQLite (WAL), **UDP and TCP DNS** on `dns.listen_addr`, response **cache**, list + DB rules, query logging, **engine-derived `protection` on `/health`**, `dns_paused` + `/pause` and `/dns/pause`/`/dns/resume`, event bus + **WebSocket `/ws`**. **Packet capture (sniffer)** is **not shipped** — no Cargo feature; `engine/src/sniffer/` holds event DTOs for future work only. **Enrich** and **behavioral rules** trees are **stubs**. **App:** SwiftUI shell with Dashboard, Setup, Devices (rename uses Bearer), Queries (REST + live WS), Alerts, Settings. API token: `~/Library/Application Support/NetSentrix/api.token` (same dir family as `dirs::data_dir()`). **Dev vs prod:** API defaults to port **8756**; DNS often uses a **non-53** port in the template — set `dns.listen_addr` to `:53` for LAN service (requires privileges). See `docs/roadmap.md`, `docs/architecture.md`, `docs/api.md`.
+**Engine:** localhost Axum API (health + envelope routes), SQLite (WAL + **`user_version` migrations** in `engine/src/storage/migrations.rs`), **UDP and TCP DNS** on `dns.listen_addr`, response **cache**, list + DB rules, query logging, **engine-derived `protection` on `/health`**, `dns_paused` + `/pause` and `/dns/pause`/`/dns/resume`, event bus + **WebSocket `/ws`**. **Packet capture (sniffer)** is **not shipped** — no Cargo feature; `engine/src/sniffer/` holds event DTOs for future work only. **Enrich** and **behavioral rules** trees are **stubs**. **App:** SwiftUI shell with Dashboard, Setup, Devices (rename uses Bearer), Queries (REST + live WS), Alerts, Settings. API token: `~/Library/Application Support/NetSentrix/api.token` (same dir family as `dirs::data_dir()`). **Dev vs prod:** API defaults to port **8756**; DNS often uses a **non-53** port in the template — set `dns.listen_addr` to `:53` for LAN service (requires privileges). See `docs/roadmap.md`, `docs/architecture.md`, `docs/api.md`.
 
-**Packaging:** `packaging/macos/launchd/` plist (paths + optional `NETSENTRIX_CONFIG`), `scripts/preflight.sh` (UDP/TCP :53 checks), `installer/BUILD.md` (Mac mini install sequence).
+**Packaging:** `packaging/macos/launchd/` plist (`NETSENTRIX_CONFIG` + **`NETSENTRIX_DATA_DIR`** template), `scripts/preflight.sh` (paths, UDP/TCP :53, API port, launchd, optional `curl /health`), `installer/BUILD.md` (Mac mini install sequence).
 
 ## Reference-only
 

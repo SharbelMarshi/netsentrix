@@ -1,3 +1,10 @@
+//! Process-level status for the API (`engine_status` on `/health`).
+//!
+//! **Operational note:** The engine transitions to [`EngineStatus::Running`] when the API task and
+//! DNS worker tasks are spawned — **before** DNS sockets necessarily finish binding. Treat
+//! `dns_udp_bound`, `dns_tcp_bound`, and `dns_*_last_error` as the source of truth for listeners.
+//! [`EngineStatus::Error`] is set when **UDP** DNS bind fails (TCP-only failure does not flip this).
+
 #[derive(Debug, Clone)]
 pub enum EngineStatus {
     Starting,

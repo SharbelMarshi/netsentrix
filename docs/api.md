@@ -56,9 +56,9 @@ Invalid or missing Bearer on protected routes → **401 Unauthorized**.
 
 ### `GET /health`
 
-Flat JSON: `version`, `engine`, `api_listen`, `dns_listen`, **`dns_udp_bound`**, **`dns_tcp_bound`**, **`dns_bound`** (legacy, same as `dns_udp_bound`), **`dns_last_error`** (UDP bind), **`dns_tcp_last_error`** (TCP bind, if any), `engine_status` (`starting` \| `running` \| `stopped` \| `error`), `suggested_lan_ip`, **`sniffer_enabled`** (always **`false`** in MVP — packet capture not shipped), `alerts_total`, `api_token_file`, `dns_paused`, `last_client_query_ms` (epoch ms of latest `dns_queries` row, or null if none), `recent_client_activity` (true if any query in the last `protection.window_seconds`).
+Flat JSON: `version`, `engine`, `api_listen`, `dns_listen`, **`dns_udp_bound`**, **`dns_tcp_bound`**, **`dns_bound`** (legacy, same as `dns_udp_bound`), **`dns_last_error`** (UDP bind), **`dns_tcp_last_error`** (TCP bind, if any), `engine_status` (`starting` \| `running` \| `stopped` \| `error` — **`error`** is set on **UDP** DNS bind failure; **TCP-only** bind failure does not flip this; see `engine/src/system/runtime.rs`), `suggested_lan_ip`, **`sniffer_enabled`** (always **`false`** in MVP — packet capture not shipped), `alerts_total`, `api_token_file`, **`config_path`**, **`netsentrix_data_dir`** (directory containing `api.token` / default DB basename), **`db_path`** (active SQLite path from config), `dns_paused`, **`last_client_query_ms`** (epoch ms of latest **`dns_queries`** row whose `device_id` is a **non-loopback** LAN client key — excludes `ip:127.*` and `ip:::1`; null if none), **`recent_client_activity`** (true when that timestamp falls within the last `protection.window_seconds`).
 
-**`protection`** (authoritative for UI): `state` (`not_active` \| `partial` \| `active`), `reasons` (machine-readable codes such as `dns_paused`, `dns_not_bound`, `listen_loopback_only`, `no_recent_lan_queries`, `engine_error`, `db_unavailable`), `window_seconds`, `distinct_clients_in_window`, `last_query_ms`, `lan_capable`, `dns_listen`.
+**`protection`** (authoritative for UI): `state` (`not_active` \| `partial` \| `active`), `reasons` (machine-readable codes such as `dns_paused`, `dns_not_bound`, `listen_loopback_only`, `no_recent_lan_queries`, `engine_error`, `db_unavailable`), `window_seconds`, `distinct_clients_in_window`, **`lan_query_count_in_window`** (row count from non-loopback LAN clients in the window), **`last_query_ms`** (same LAN-only semantics as top-level LAN proof; null if none), `lan_capable`, `dns_listen`.
 
 ### `GET /stats`
 
@@ -80,7 +80,16 @@ POST (Bearer): body `{ "dns": { "upstream"?: "...", "blocklist_paths"?: [...], "
 
 ### `GET /devices`, `GET /devices/:id`, `PATCH /devices/:id`
 
-List / get device rows from SQLite. PATCH (Bearer): `{ "name": "..." }`.
+List / get device rows from SQLite (DNS-visibility MVP). Each device includes:
+
+- Core: `id` (e.g. `ip:192.168.1.10`), `ip_address`, `name`, `first_seen`, `last_seen` (epoch ms), `mac_address`, `hostname`, `vendor` (usually `null` until discovery/enrichment exists).
+- **`query_count_total`**: count of `dns_queries` rows for this `device_id` (lifetime in DB).
+- **`query_count_24h`**: same count restricted to a **rolling 24h** window ending when the request is handled.
+- **`recently_seen_dns`**: `true` when `last_seen` falls in that same rolling 24h window.
+- **`is_active`**: currently always `1` on upsert (not a staleness flag yet).
+- **`is_protected`**: reserved — **always `false`** until per-device policy exists; do not surface as “protected” in product UI.
+
+PATCH (Bearer): `{ "name": "..." }`.
 
 ### `GET /alerts`
 

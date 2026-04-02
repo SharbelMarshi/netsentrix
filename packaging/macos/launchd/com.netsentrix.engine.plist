@@ -1,31 +1,63 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  NetSentrix Core — system LaunchDaemon template (Mac mini / always-on).
+
+  MVP model:
+  - Job runs as root (omit UserName) so UDP/TCP port 53 can bind when dns.listen_addr uses :53.
+  - GUI app runs as the logged-in user and reads the API token from disk — see NETSENTRIX_DATA_DIR below.
+
+  Before install:
+  1. Build/copy netsentrix-engine to the path in ProgramArguments (default: /usr/local/bin/netsentrix-engine).
+  2. Uncomment and edit EnvironmentVariables so config + data + token align with your runbook
+     (see packaging/macos/installer/BUILD.md and engine/src/system/paths.rs).
+  3. Ensure StandardOutPath / StandardErrorPath log files are writable (launchd creates them if missing;
+     rotate with newsyslog or logrotate-style tools as you prefer).
+
+  Not included: SMJobBless, signed installer, automatic migration of system DNS.
+-->
 <plist version="1.0">
 <dict>
 	<key>Label</key>
 	<string>com.netsentrix.engine</string>
 	<key>ProgramArguments</key>
 	<array>
+		<!-- REPLACE if you install elsewhere (e.g. /opt/netsentrix/netsentrix-engine). -->
 		<string>/usr/local/bin/netsentrix-engine</string>
 	</array>
-	<!-- Optional: force config path (otherwise engine uses default dirs::config_dir path). -->
 	<!--
+	  Strongly recommended for root LaunchDaemon + GUI app on the same Mac:
+	  - NETSENTRIX_CONFIG — fixed config (e.g. under /usr/local/etc).
+	  - NETSENTRIX_DATA_DIR — parent of the NetSentrix/ subtree for api.token + default db layout
+	    (engine uses NETSENTRIX_DATA_DIR/NetSentrix/api.token). Set permissions so the engine can
+	    write and your GUI user can read the token (e.g. root:staff 0640 on api.token, directory 0755).
+	  storage.db_path in config.toml should live on durable media (same tree is typical).
+	-->
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>NETSENTRIX_CONFIG</key>
 		<string>/usr/local/etc/NetSentrix/config.toml</string>
+		<key>NETSENTRIX_DATA_DIR</key>
+		<string>/usr/local/var/netsentrix</string>
+		<!-- Optional: same as default under DATA_DIR; set explicitly so operators can mirror in the app (NETSENTRIX_TOKEN_FILE). -->
+		<key>NETSENTRIX_TOKEN_FILE</key>
+		<string>/usr/local/var/netsentrix/NetSentrix/api.token</string>
 	</dict>
-	-->
 	<key>RunAtLoad</key>
 	<true/>
+	<!-- Restart if the process exits (crash); see ThrottleInterval to avoid tight respawn loops. -->
 	<key>KeepAlive</key>
 	<true/>
+	<key>ThrottleInterval</key>
+	<integer>10</integer>
 	<key>StandardOutPath</key>
 	<string>/var/log/netsentrix-engine.log</string>
 	<key>StandardErrorPath</key>
 	<string>/var/log/netsentrix-engine.err</string>
-	<key>ThrottleInterval</key>
-	<integer>10</integer>
+	<!--
+	  WorkingDirectory is not required for NetSentrix (paths come from env + dirs). /var/root is the
+	  conventional home for root daemons; it does not by itself fix token path mismatch with GUI users.
+	-->
 	<key>WorkingDirectory</key>
 	<string>/var/root</string>
 </dict>

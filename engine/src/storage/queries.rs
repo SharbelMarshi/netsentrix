@@ -29,10 +29,35 @@ pub fn insert(conn: &Connection, row: &DnsQueryRow) -> rusqlite::Result<i64> {
     Ok(conn.last_insert_rowid())
 }
 
-/// Latest `dns_queries.timestamp` (epoch ms), if any row exists.
+/// Latest `dns_queries.timestamp` (epoch ms), **any** row (includes loopback). Prefer [`latest_non_loopback_lan_timestamp_ms`] for LAN proof.
+#[allow(dead_code)]
 pub fn latest_timestamp_ms(conn: &Connection) -> rusqlite::Result<Option<i64>> {
     conn.query_row("SELECT MAX(timestamp) FROM dns_queries", [], |r| r.get(0))
         .optional()
+}
+
+/// SQL predicate: rows tied to a likely **LAN** client (`ip:` key, not loopback / not `::1`).
+pub const NON_LOOPBACK_LAN_DEVICE_SQL: &str = "device_id IS NOT NULL \
+     AND device_id LIKE 'ip:%' \
+     AND device_id NOT LIKE 'ip:127.%' \
+     AND device_id != 'ip:::1'";
+
+/// Latest query time from **non-loopback** `device_id` rows only (proof of LAN DNS through NetSentrix).
+pub fn latest_non_loopback_lan_timestamp_ms(conn: &Connection) -> rusqlite::Result<Option<i64>> {
+    let sql = format!(
+        "SELECT MAX(timestamp) FROM dns_queries WHERE {}",
+        NON_LOOPBACK_LAN_DEVICE_SQL
+    );
+    conn.query_row(&sql, [], |r| r.get(0)).optional()
+}
+
+/// Count of logged queries in the window from non-loopback LAN clients (volume, not distinct IPs).
+pub fn count_lan_client_queries_since(conn: &Connection, since_ms: i64) -> rusqlite::Result<i64> {
+    let sql = format!(
+        "SELECT COUNT(*) FROM dns_queries WHERE timestamp >= ?1 AND ({})",
+        NON_LOOPBACK_LAN_DEVICE_SQL
+    );
+    conn.query_row(&sql, [since_ms], |r| r.get(0))
 }
 
 /// Distinct `device_id` values in the window with `ip:` prefix excluding loopback-looking IDs.
@@ -41,12 +66,10 @@ pub fn count_distinct_non_loopback_clients_since(
     since_ms: i64,
 ) -> rusqlite::Result<i64> {
     conn.query_row(
-        r#"SELECT COUNT(DISTINCT device_id) FROM dns_queries
-           WHERE timestamp >= ?1
-             AND device_id IS NOT NULL
-             AND device_id LIKE 'ip:%'
-             AND device_id NOT LIKE 'ip:127.%'
-             AND device_id != 'ip:::1'"#,
+        &format!(
+            "SELECT COUNT(DISTINCT device_id) FROM dns_queries WHERE timestamp >= ?1 AND ({})",
+            NON_LOOPBACK_LAN_DEVICE_SQL
+        ),
         [since_ms],
         |r| r.get(0),
     )
@@ -153,5 +176,24 @@ pub fn aggregate_stats(conn: &Connection) -> rusqlite::Result<QueryStats> {
         blocked_queries: blocked,
         allowed_queries: allowed,
         distinct_devices: distinct,
+    })
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct LatencyAggregate {
+    /// `AVG(latency_ms)` over rows where latency was recorded (typically upstream forwards).
+    pub avg_latency_ms: Option<f64>,
+    pub latency_sample_count: i64,
+}
+
+pub fn aggregate_latency(conn: &Connection) -> rusqlite::Result<LatencyAggregate> {
+    let (avg, n): (Option<f64>, i64) = conn.query_row(
+        r#"SELECT AVG(latency_ms), COUNT(*) FROM dns_queries WHERE latency_ms IS NOT NULL"#,
+        [],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?;
+    Ok(LatencyAggregate {
+        avg_latency_ms: avg,
+        latency_sample_count: n,
     })
 }

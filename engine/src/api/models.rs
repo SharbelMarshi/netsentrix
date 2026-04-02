@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::config::schema::{BlockPolicy, DnsSection, EngineConfig};
+use crate::device::models::DeviceRow;
 
 /// Authoritative protection summary (engine-computed).
 #[derive(Debug, Serialize, Clone)]
@@ -10,6 +11,9 @@ pub struct ProtectionSummary {
     pub reasons: Vec<String>,
     pub window_seconds: u64,
     pub distinct_clients_in_window: i64,
+    /// Rows from **non-loopback** LAN `device_id` keys in the sliding window (volume).
+    pub lan_query_count_in_window: i64,
+    /// Latest `dns_queries.timestamp` from non-loopback LAN clients (not localhost test traffic).
     pub last_query_ms: Option<i64>,
     pub lan_capable: bool,
     pub dns_listen: String,
@@ -22,6 +26,7 @@ impl ProtectionSummary {
             reasons: vec!["db_unavailable".into()],
             window_seconds,
             distinct_clients_in_window: 0,
+            lan_query_count_in_window: 0,
             last_query_ms: None,
             lan_capable: false,
             dns_listen,
@@ -59,6 +64,12 @@ pub struct HealthResponse {
     pub recent_client_activity: bool,
     pub dns_paused: bool,
     pub protection: ProtectionSummary,
+    /// Resolved config file path (same as startup).
+    pub config_path: String,
+    /// Directory containing `api.token` and default DB basename (`.../NetSentrix`).
+    pub netsentrix_data_dir: String,
+    /// SQLite path from active config.
+    pub db_path: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -113,6 +124,10 @@ pub struct StatsResponse {
     /// DNS response cache lookups (hits / misses) when cache is enabled.
     pub dns_cache_hits: u64,
     pub dns_cache_misses: u64,
+    /// Mean `latency_ms` over logged queries that have latency (forwarded path), or absent if none.
+    pub dns_avg_latency_ms: Option<f64>,
+    /// Row count included in the average.
+    pub dns_latency_sample_count: i64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -144,6 +159,54 @@ pub struct PatternBody {
 #[derive(Debug, Deserialize)]
 pub struct DevicePatchBody {
     pub name: String,
+}
+
+/// Device row returned by `GET /devices` and `GET /devices/:id` (DNS-visibility MVP).
+#[derive(Debug, Serialize)]
+pub struct DeviceResponse {
+    pub id: String,
+    pub ip_address: String,
+    pub mac_address: Option<String>,
+    pub hostname: Option<String>,
+    pub vendor: Option<String>,
+    pub name: Option<String>,
+    pub first_seen: Option<i64>,
+    pub last_seen: Option<i64>,
+    /// Currently always `true` on upsert; not a staleness signal until TTL logic exists.
+    pub is_active: bool,
+    /// Reserved for future per-device policy — **always `false`** in the DNS-only MVP (do not map to “protected” UX).
+    pub is_protected: bool,
+    /// All `dns_queries` rows for this `device_id` in the database.
+    pub query_count_total: i64,
+    /// Queries with `timestamp` in the **rolling 24 hours** before the API handler’s `now` (epoch ms).
+    pub query_count_24h: i64,
+    /// `true` when `last_seen` is within that same rolling 24h window.
+    pub recently_seen_dns: bool,
+}
+
+impl DeviceResponse {
+    pub fn from_parts(row: DeviceRow, query_total: i64, query_24h: i64, now_ms: i64) -> Self {
+        let win_start = now_ms.saturating_sub(86_400_000);
+        let recently_seen_dns = row
+            .last_seen
+            .map(|t| t >= win_start)
+            .unwrap_or(false);
+        Self {
+            id: row.id,
+            ip_address: row.ip_address,
+            mac_address: row.mac_address,
+            hostname: row.hostname,
+            vendor: row.vendor,
+            name: row.name,
+            first_seen: row.first_seen,
+            last_seen: row.last_seen,
+            is_active: row.is_active,
+            is_protected: row.is_protected,
+            query_count_total: query_total,
+            query_count_24h: query_24h,
+            recently_seen_dns,
+        }
+    }
 }
 
 /// Export engine config subset for API (clone dns + api listen).

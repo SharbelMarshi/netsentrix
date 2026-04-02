@@ -28,10 +28,14 @@ final class EngineService: ObservableObject {
     /// Twelve five-second buckets over the last minute (for Dashboard sparkline).
     @Published private(set) var trafficSparklineBuckets: [Int] = Array(repeating: 0, count: 12)
 
+    /// Recent DNS cache hit-rate samples (%), one per successful stats refresh (Dashboard cadence).
+    @Published private(set) var dnsCacheHitRateHistory: [Double] = []
+
     private var dnsWebSocketTask: URLSessionWebSocketTask?
     private var dnsSocketReceiveTask: Task<Void, Never>?
     private var sparklineEventTimes: [Date] = []
     private var dnsWebSocketRetainCount = 0
+    private let dnsCacheHitRateHistoryMax = 12
 
     @Published private(set) var hasCompletedInitialHealthFetch = false
     @Published private(set) var hasCompletedInitialStatsFetch = false
@@ -41,6 +45,15 @@ final class EngineService: ObservableObject {
 
     /// Last mutation / auxiliary endpoint error (settings, devices, alerts).
     @Published private(set) var lastOperationError: String?
+
+    /// Shown after a successful POST `/block` or `/allow` (Queries + Settings).
+    @Published private(set) var lastDomainRuleSuccess: String?
+
+    /// True while POST `/settings`, `/reload`, or DNS pause/resume is in flight.
+    @Published private(set) var isSavingSettings = false
+
+    /// True while POST `/block` or `/allow` is in flight.
+    @Published private(set) var isApplyingDomainRule = false
 
     init(client: EngineAPIClient = EngineAPIClient()) {
         self.client = client
@@ -73,12 +86,27 @@ final class EngineService: ObservableObject {
             hasCompletedInitialStatsFetch = true
         }
         do {
-            lastStats = try await client.stats()
+            let s = try await client.stats()
+            lastStats = s
             statsFetchError = nil
+            recordDnsCacheHitRateSample(stats: s)
         } catch {
             lastStats = nil
             statsFetchError = error.localizedDescription
         }
+    }
+
+    private func recordDnsCacheHitRateSample(stats: StatsPayload) {
+        guard let h = stats.dnsCacheHits, let m = stats.dnsCacheMisses else { return }
+        let total = h + m
+        guard total > 0 else { return }
+        let pct = Double(h) / Double(total) * 100.0
+        var next = dnsCacheHitRateHistory
+        next.append(pct)
+        if next.count > dnsCacheHitRateHistoryMax {
+            next.removeFirst(next.count - dnsCacheHitRateHistoryMax)
+        }
+        dnsCacheHitRateHistory = next
     }
 
     func refreshQueries(limit: Int = 100) async {
@@ -201,6 +229,17 @@ final class EngineService: ObservableObject {
         }
     }
 
+    /// Latest device row + query stats (`GET /devices/:id`). Returns nil on failure (`lastOperationError` set).
+    func fetchDevice(id: String) async -> DeviceDTO? {
+        lastOperationError = nil
+        do {
+            return try await client.device(id: id)
+        } catch {
+            lastOperationError = error.localizedDescription
+            return nil
+        }
+    }
+
     func refreshAlerts() async {
         lastOperationError = nil
         defer { hasCompletedInitialAlertsFetch = true }
@@ -230,10 +269,65 @@ final class EngineService: ObservableObject {
     }
 
     func saveUpstream(_ upstream: String) async {
+        await saveSettingsPatch(SettingsDnsPatch(upstream: upstream, blockPolicy: nil, protectionActivityWindowSecs: nil))
+    }
+
+    func saveBlockPolicy(_ apiValue: String) async {
+        await saveSettingsPatch(SettingsDnsPatch(upstream: nil, blockPolicy: apiValue, protectionActivityWindowSecs: nil))
+    }
+
+    func saveProtectionActivityWindow(seconds: UInt64) async {
+        await saveSettingsPatch(
+            SettingsDnsPatch(upstream: nil, blockPolicy: nil, protectionActivityWindowSecs: seconds)
+        )
+    }
+
+    /// Reload `config.toml` from disk (e.g. manual edits); refreshes in-memory settings + health.
+    func reloadConfigFromDisk() async {
         lastOperationError = nil
+        isSavingSettings = true
+        defer { isSavingSettings = false }
         do {
-            try await client.patchUpstream(upstream)
-            await refreshSettings()
+            try await client.postReload()
+            settings = try await client.settings()
+            await refreshHealth()
+        } catch {
+            lastOperationError = error.localizedDescription
+        }
+    }
+
+    /// While paused, engine answers **SERVFAIL** on UDP/TCP and does **not** forward to upstream.
+    func pauseDnsAnswering() async {
+        lastOperationError = nil
+        isSavingSettings = true
+        defer { isSavingSettings = false }
+        do {
+            try await client.postDnsPause()
+            await refreshHealth()
+        } catch {
+            lastOperationError = error.localizedDescription
+        }
+    }
+
+    func resumeDnsAnswering() async {
+        lastOperationError = nil
+        isSavingSettings = true
+        defer { isSavingSettings = false }
+        do {
+            try await client.postDnsResume()
+            await refreshHealth()
+        } catch {
+            lastOperationError = error.localizedDescription
+        }
+    }
+
+    private func saveSettingsPatch(_ patch: SettingsDnsPatch) async {
+        lastOperationError = nil
+        isSavingSettings = true
+        defer { isSavingSettings = false }
+        do {
+            settings = try await client.postSettings(dns: patch)
+            await refreshHealth()
         } catch {
             lastOperationError = error.localizedDescription
         }
@@ -247,5 +341,49 @@ final class EngineService: ObservableObject {
         } catch {
             lastOperationError = error.localizedDescription
         }
+    }
+
+    func clearDomainRuleSuccess() {
+        lastDomainRuleSuccess = nil
+    }
+
+    /// POST `/block` with normalized domain; engine reloads filter immediately.
+    func blockDomain(_ raw: String) async {
+        await applyDomainRule(raw: raw, allow: false)
+    }
+
+    /// POST `/allow` with normalized domain; allowlist wins over blocks for new lookups.
+    func allowDomain(_ raw: String) async {
+        await applyDomainRule(raw: raw, allow: true)
+    }
+
+    private func applyDomainRule(raw: String, allow: Bool) async {
+        lastOperationError = nil
+        lastDomainRuleSuccess = nil
+        let p = Self.normalizeDomainPattern(raw)
+        guard !p.isEmpty else {
+            lastOperationError = "Enter a domain name."
+            return
+        }
+        isApplyingDomainRule = true
+        defer { isApplyingDomainRule = false }
+        do {
+            if allow {
+                try await client.postAllowDomain(pattern: p)
+                lastDomainRuleSuccess = "Allowed «\(p)» — this name bypasses block rules for new lookups."
+            } else {
+                try await client.postBlockDomain(pattern: p)
+                lastDomainRuleSuccess = "Blocked «\(p)» — new lookups will be filtered using this rule."
+            }
+            await refreshQueries(limit: 100)
+        } catch {
+            lastOperationError = error.localizedDescription
+        }
+    }
+
+    private static func normalizeDomainPattern(_ raw: String) -> String {
+        var s = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        while s.hasSuffix(".") { s.removeLast() }
+        return s
     }
 }

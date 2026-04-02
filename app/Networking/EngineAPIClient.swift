@@ -3,6 +3,7 @@ import Foundation
 enum EngineAPIError: Error, LocalizedError {
     case invalidURL
     case badStatus(Int)
+    case unauthorized
     case decoding(Error)
     case apiError(String, String)
 
@@ -10,6 +11,8 @@ enum EngineAPIError: Error, LocalizedError {
         switch self {
         case .invalidURL: "Invalid engine base URL"
         case .badStatus(let c): "HTTP \(c)"
+        case .unauthorized:
+            "Unauthorized — check that the app can read the same api.token file the engine uses (see Setup → Advanced or NETSENTRIX_TOKEN_FILE)."
         case .decoding(let e): e.localizedDescription
         case .apiError(let c, let m): "\(c): \(m)"
         }
@@ -65,6 +68,16 @@ struct EngineAPIClient: Sendable {
         return d
     }
 
+    func device(id: String) async throws -> DeviceDTO {
+        let enc = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        let url = baseURL.appendingPathComponent("devices", isDirectory: false).appendingPathComponent(enc, isDirectory: false)
+        let env: ApiEnvelope<DeviceDTO> = try await get(url: url, decode: ApiEnvelope<DeviceDTO>.self)
+        guard env.ok, let d = env.data else {
+            throw EngineAPIError.apiError(env.error?.code ?? "unknown", env.error?.message ?? "device failed")
+        }
+        return d
+    }
+
     func alerts() async throws -> [AlertDTO] {
         let env: ApiEnvelope<[AlertDTO]> = try await get(path: "alerts", decode: ApiEnvelope<[AlertDTO]>.self)
         guard env.ok, let d = env.data else {
@@ -81,9 +94,26 @@ struct EngineAPIClient: Sendable {
         return d
     }
 
-    func patchUpstream(_ upstream: String) async throws {
-        let body = DnsPatchBody(dns: DnsPatchInner(upstream: upstream))
-        try await postJSON(method: "POST", url: baseURL.appendingPathComponent("settings", isDirectory: false), body: body)
+    /// POST `/settings` — only non-nil fields are sent; engine merges into config.
+    func postSettings(dns: SettingsDnsPatch) async throws -> SettingsPayload {
+        let body = SettingsPostBody(dns: dns)
+        let url = baseURL.appendingPathComponent("settings", isDirectory: false)
+        return try await postJSONReturningEnvelope(url: url, body: body)
+    }
+
+    /// Reread `config.toml` from disk and reload lists/filter (manual edits outside the app).
+    func postReload() async throws {
+        try await postJSONExpectOk(url: baseURL.appendingPathComponent("reload", isDirectory: false), body: EmptyJSON())
+    }
+
+    /// Idempotent: DNS answers **SERVFAIL** and does not forward while paused.
+    func postDnsPause() async throws {
+        try await postJSONExpectOk(url: baseURL.appendingPathComponent("dns/pause", isDirectory: false), body: EmptyJSON())
+    }
+
+    /// Idempotent: resume normal filtered DNS.
+    func postDnsResume() async throws {
+        try await postJSONExpectOk(url: baseURL.appendingPathComponent("dns/resume", isDirectory: false), body: EmptyJSON())
     }
 
     func patchDeviceName(id: String, name: String) async throws {
@@ -93,7 +123,23 @@ struct EngineAPIClient: Sendable {
         try await postJSON(method: "PATCH", url: url, body: Body(name: name))
     }
 
+    /// POST `/block` — inserts `dns_block` rule and reloads the in-memory filter.
+    func postBlockDomain(pattern: String) async throws {
+        let url = baseURL.appendingPathComponent("block", isDirectory: false)
+        try await postJSON(url: url, body: PatternPostBody(pattern: pattern))
+    }
+
+    /// POST `/allow` — inserts `dns_allow` rule and reloads the in-memory filter.
+    func postAllowDomain(pattern: String) async throws {
+        let url = baseURL.appendingPathComponent("allow", isDirectory: false)
+        try await postJSON(url: url, body: PatternPostBody(pattern: pattern))
+    }
+
     // MARK: - Low level
+
+    private struct PatternPostBody: Encodable {
+        let pattern: String
+    }
 
     private func get<T: Decodable>(path: String, decode: T.Type) async throws -> T {
         let url = baseURL.appendingPathComponent(path)
@@ -124,7 +170,63 @@ struct EngineAPIClient: Sendable {
         req.timeoutInterval = 15
         let (data, resp) = try await URLSession.shared.data(for: req)
         guard let http = resp as? HTTPURLResponse else { throw EngineAPIError.badStatus(-1) }
-        guard (200 ..< 300).contains(http.statusCode) else { throw EngineAPIError.badStatus(http.statusCode) }
+        if http.statusCode == 401 { throw EngineAPIError.unauthorized }
+        guard (200 ..< 300).contains(http.statusCode) else {
+            throw postFailureError(data: data, statusCode: http.statusCode)
+        }
+        if let env = try? JSONDecoder().decode(PostAckEnvelope.self, from: data), env.ok == false {
+            throw EngineAPIError.apiError(env.error?.code ?? "error", env.error?.message ?? "request failed")
+        }
+    }
+
+    /// Prefer engine `error.code` / `error.message` when the response body is JSON.
+    private func postFailureError(data: Data, statusCode: Int) -> Error {
+        struct FailEnv: Decodable {
+            let error: ApiErrorBody?
+        }
+        if let env = try? JSONDecoder().decode(FailEnv.self, from: data), let e = env.error {
+            return EngineAPIError.apiError(e.code, e.message)
+        }
+        return EngineAPIError.badStatus(statusCode)
+    }
+
+    private func postJSONReturningEnvelope<B: Encodable>(url: URL, body: B) async throws -> SettingsPayload {
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let t = token() {
+            req.setValue("Bearer \(t)", forHTTPHeaderField: "Authorization")
+        }
+        req.httpBody = try JSONEncoder().encode(body)
+        req.timeoutInterval = 15
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        guard let http = resp as? HTTPURLResponse else { throw EngineAPIError.badStatus(-1) }
+        if http.statusCode == 401 { throw EngineAPIError.unauthorized }
+        guard (200 ..< 300).contains(http.statusCode) else {
+            throw postFailureError(data: data, statusCode: http.statusCode)
+        }
+        let env = try JSONDecoder().decode(ApiEnvelope<SettingsPayload>.self, from: data)
+        guard env.ok, let d = env.data else {
+            throw EngineAPIError.apiError(env.error?.code ?? "unknown", env.error?.message ?? "settings save failed")
+        }
+        return d
+    }
+
+    private func postJSONExpectOk<B: Encodable>(url: URL, body: B) async throws {
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let t = token() {
+            req.setValue("Bearer \(t)", forHTTPHeaderField: "Authorization")
+        }
+        req.httpBody = try JSONEncoder().encode(body)
+        req.timeoutInterval = 15
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        guard let http = resp as? HTTPURLResponse else { throw EngineAPIError.badStatus(-1) }
+        if http.statusCode == 401 { throw EngineAPIError.unauthorized }
+        guard (200 ..< 300).contains(http.statusCode) else {
+            throw postFailureError(data: data, statusCode: http.statusCode)
+        }
         if let env = try? JSONDecoder().decode(PostAckEnvelope.self, from: data), env.ok == false {
             throw EngineAPIError.apiError(env.error?.code ?? "error", env.error?.message ?? "request failed")
         }

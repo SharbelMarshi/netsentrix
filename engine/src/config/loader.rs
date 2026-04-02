@@ -1,3 +1,9 @@
+//! Load and persist `config.toml`.
+//!
+//! - **Path:** `NETSENTRIX_CONFIG` or [`crate::system::paths::default_config_file`].
+//! - **First run:** Writes defaults (including `storage.db_path` from [`crate::system::paths::default_db_path`],
+//!   which respects `NETSENTRIX_DATA_DIR` if set). See `system/paths.rs` for the full runtime model.
+
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;

@@ -108,8 +108,9 @@ async fn main() -> anyhow::Result<()> {
     });
 
     let dns_tcp_sh = dns_shared.clone();
+    let dns_tcp_st = dns_state.clone();
     let dns_tcp_task = tokio::spawn(async move {
-        if let Err(e) = dns::server::run_dns_tcp_loop(dns_tcp_sh).await {
+        if let Err(e) = dns::server::run_dns_tcp_loop(dns_tcp_sh, dns_tcp_st).await {
             tracing::error!(error = %e, "DNS TCP task exited");
         }
     });

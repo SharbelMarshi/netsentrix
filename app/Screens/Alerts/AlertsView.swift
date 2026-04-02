@@ -27,7 +27,7 @@ struct AlertsView: View {
                         Text("No alerts")
                             .font(.headline)
                             .foregroundStyle(Theme.textPrimary)
-                        Text("The rules engine is not emitting alerts yet — nothing to show here.")
+                        Text("Automated alerting is not part of the shipping product yet — DNS filtering still works; this list is reserved for future detection features.")
                             .font(.callout)
                             .foregroundStyle(Theme.textSecondary)
                     }

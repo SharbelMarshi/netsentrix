@@ -37,10 +37,19 @@ pub struct HealthResponse {
     pub engine: &'static str,
     pub api_listen: String,
     pub dns_listen: String,
+    /// Same as `dns_udp_bound` (legacy field for older clients).
     pub dns_bound: bool,
+    /// UDP DNS listener on `dns_listen`.
+    pub dns_udp_bound: bool,
+    /// TCP DNS listener on `dns_listen` (large responses / RFC 7766 clients).
+    pub dns_tcp_bound: bool,
+    /// Last UDP bind error, if any.
     pub dns_last_error: Option<String>,
+    /// Last TCP bind error, if any.
+    pub dns_tcp_last_error: Option<String>,
     pub engine_status: String,
     pub suggested_lan_ip: Option<String>,
+    /// Always `false` in MVP — libpcap capture is not shipped (see `sniffer` module DTOs only).
     pub sniffer_enabled: bool,
     pub alerts_total: i64,
     pub api_token_file: String,

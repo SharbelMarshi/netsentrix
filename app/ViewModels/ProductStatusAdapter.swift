@@ -58,12 +58,15 @@ enum ProductStatusAdapter {
         let engine = resolveEngine(health: health, healthFetchFailed: healthFetchFailed)
         let totalQ = stats.map(\.totalQueries) ?? 0
         let dnsPaused = health?.dnsPaused == true
-        let dnsBound = health?.dnsBound == true
+        let dnsUdpOk = health.map { $0.dnsUdpBound ?? $0.dnsBound } ?? false
+        let dnsBound = dnsUdpOk
         let running = health.map { $0.engineStatus.lowercased() == "running" } ?? false
         let starting = health.map { $0.engineStatus.lowercased() == "starting" } ?? false
         let stopped = health.map { $0.engineStatus.lowercased() == "stopped" } ?? false
         let dnsErr = health?.dnsLastError?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let hasDnsError = !(dnsErr ?? "").isEmpty
+        let tcpErr = health?.dnsTcpLastError?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasUdpDnsError = !(dnsErr ?? "").isEmpty
+        let hasExplicitTcpFailure = health?.dnsTcpBound == false && dnsUdpOk
 
         let (protection, pReason, pNext) = resolveProtection(
             health: health,
@@ -75,7 +78,9 @@ enum ProductStatusAdapter {
             stopped: stopped,
             totalQueries: totalQ,
             healthFetchFailed: healthFetchFailed,
-            hasDnsError: hasDnsError
+            hasUdpDnsError: hasUdpDnsError,
+            hasExplicitTcpFailure: hasExplicitTcpFailure,
+            tcpErrorDetail: tcpErr
         )
 
         let traffic: ProductTrafficState = resolveTraffic(
@@ -92,7 +97,9 @@ enum ProductStatusAdapter {
             running: running,
             stopped: stopped,
             totalQueries: totalQ,
-            hasDnsError: hasDnsError,
+            hasUdpDnsError: hasUdpDnsError,
+            hasExplicitTcpFailure: hasExplicitTcpFailure,
+            tcpErrorDetail: tcpErr,
             healthErrorMessage: healthErrorMessage,
             protection: health?.protection
         )
@@ -194,7 +201,9 @@ enum ProductStatusAdapter {
         stopped: Bool,
         totalQueries: Int64,
         healthFetchFailed: Bool,
-        hasDnsError: Bool
+        hasUdpDnsError: Bool,
+        hasExplicitTcpFailure: Bool,
+        tcpErrorDetail: String?
     ) -> (ProductProtectionState, String, String?) {
         if healthFetchFailed {
             return (.notActive, "Can’t tell — the NetSentrix engine isn’t reachable.", "Start NetSentrix Core on this Mac and try again.")
@@ -212,8 +221,12 @@ enum ProductStatusAdapter {
         if dnsPaused {
             return (.notActive, "DNS is paused — clients receive errors instead of filtered DNS.", "Turn off pause in engine controls (when available) or restart the engine with DNS answering enabled.")
         }
-        if hasDnsError, let msg = health?.dnsLastError, !msg.isEmpty {
+        if hasUdpDnsError, let msg = health?.dnsLastError, !msg.isEmpty {
             return (.notActive, "DNS couldn’t bind or encountered an error.", "Check the DNS listen address in engine config and that the port is free. Details: \(msg)")
+        }
+        if hasExplicitTcpFailure {
+            let detail = (tcpErrorDetail ?? "").isEmpty ? "See engine logs for TCP bind details." : tcpErrorDetail!
+            return (.notActive, "UDP DNS is up, but the TCP listener failed — some clients may not get large answers.", detail)
         }
         if stopped || engine == .stopped {
             return (.notActive, "The engine is stopped — your network isn’t using NetSentrix for DNS.", "Start the NetSentrix engine.")
@@ -241,7 +254,9 @@ enum ProductStatusAdapter {
         running: Bool,
         stopped: Bool,
         totalQueries: Int64,
-        hasDnsError: Bool,
+        hasUdpDnsError: Bool,
+        hasExplicitTcpFailure: Bool,
+        tcpErrorDetail: String?,
         healthErrorMessage: String?,
         protection: ProtectionSummaryDTO?
     ) -> (ProductSetupState, String, String?) {
@@ -259,8 +274,12 @@ enum ProductStatusAdapter {
         if dnsPaused {
             return (.needsAttention, "DNS answering is paused.", "Resume normal DNS operation before validating setup.")
         }
-        if hasDnsError {
+        if hasUdpDnsError {
             return (.needsAttention, "DNS service needs attention before clients can use NetSentrix.", "Resolve the DNS bind error shown in Engine details, then try again.")
+        }
+        if hasExplicitTcpFailure {
+            let hint = (tcpErrorDetail ?? "").isEmpty ? "Check engine logs and port conflicts." : tcpErrorDetail!
+            return (.needsAttention, "TCP DNS listener is not running; UDP works but large responses may fail.", hint)
         }
         if stopped {
             return (.needsAttention, "The engine is stopped.", "Start the engine, then continue router DNS setup.")
@@ -288,6 +307,9 @@ enum ProductStatusAdapter {
         if dnsPaused { return "Paused — not accepting DNS." }
         if !running { return "Engine not running — DNS inactive." }
         if dnsBound, let listen = health?.dnsListen {
+            if health?.dnsTcpBound == false {
+                return "NetSentrix is accepting DNS on \(listen) (UDP up; TCP listener failed — large answers may not work for some clients)."
+            }
             return "NetSentrix is accepting DNS on \(listen)."
         }
         if let listen = health?.dnsListen {

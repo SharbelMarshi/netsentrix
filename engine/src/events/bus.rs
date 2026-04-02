@@ -1,3 +1,5 @@
+//! Internal pub/sub. **DNS queries** are live; packet/alert channels are reserved for future work.
+
 use tokio::sync::broadcast;
 
 use crate::events::models::DnsQueryEvent;

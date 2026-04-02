@@ -51,7 +51,7 @@
 
 6. **Router**
 
-   After `curl -s http://127.0.0.1:8756/health` succeeds on the Mac, set **DHCP DNS** on the router to this host’s **LAN IP**.
+   After `curl -s http://127.0.0.1:8756/health` succeeds on the Mac, confirm JSON fields **`dns_udp_bound`** and **`dns_tcp_bound`** are what you expect (both `true` when UDP and TCP listeners bound on `dns.listen_addr`). Then set **DHCP DNS** on the router to this host’s **LAN IP**.
 
 7. **Distribution**
 

@@ -183,6 +183,17 @@ struct DashboardView: View {
                     VStack(alignment: .leading, spacing: 6) {
                         LabeledContent("API listen") { Text(h.apiListen).font(.caption.monospaced()) }
                         LabeledContent("DNS listen") { Text(h.dnsListen).font(.caption.monospaced()) }
+                        LabeledContent("DNS UDP") {
+                            Text(dnsBindStatus(h.dnsUdpBound, fallback: h.dnsBound)).font(.caption)
+                        }
+                        LabeledContent("DNS TCP") {
+                            Text(dnsTcpBindStatus(h.dnsTcpBound)).font(.caption)
+                        }
+                        if let te = h.dnsTcpLastError, !te.isEmpty {
+                            LabeledContent("TCP bind error") {
+                                Text(te).font(.caption2).foregroundStyle(Theme.warning)
+                            }
+                        }
                         LabeledContent("Version") { Text(h.version).font(.caption) }
                     }
                     .padding(.top, 4)
@@ -193,6 +204,16 @@ struct DashboardView: View {
                 }
             }
         }
+    }
+
+    private func dnsBindStatus(_ explicit: Bool?, fallback: Bool) -> String {
+        let v = explicit ?? fallback
+        return v ? "Listening" : "Not listening"
+    }
+
+    private func dnsTcpBindStatus(_ v: Bool?) -> String {
+        guard let v else { return "Unknown (older engine)" }
+        return v ? "Listening" : "Not listening"
     }
 
     private func engineTitleColor(_ e: ProductEngineState) -> Color {

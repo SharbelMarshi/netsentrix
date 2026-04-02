@@ -23,8 +23,14 @@ use crate::storage::queries::{self, DnsQueryRow};
 
 #[derive(Debug, Default, Clone)]
 pub struct DnsRuntimeState {
-    pub bound: bool,
-    pub last_error: Option<String>,
+    /// UDP DNS socket successfully bound (`dns.listen_addr`).
+    pub udp_bound: bool,
+    /// TCP DNS listener successfully bound (same address/port).
+    pub tcp_bound: bool,
+    /// Last UDP bind failure message (cleared when UDP bind succeeds).
+    pub udp_last_error: Option<String>,
+    /// Last TCP bind failure message (cleared when TCP bind succeeds).
+    pub tcp_last_error: Option<String>,
 }
 
 pub struct DnsLoopShared {
@@ -48,8 +54,8 @@ pub async fn run_dns_loop(
         Err(e) => {
             {
                 let mut g = runtime.write().await;
-                g.bound = false;
-                g.last_error = Some(e.to_string());
+                g.udp_bound = false;
+                g.udp_last_error = Some(e.to_string());
             }
             {
                 let mut s = shared.engine_status.write().await;
@@ -68,8 +74,8 @@ pub async fn run_dns_loop(
 
     {
         let mut g = runtime.write().await;
-        g.bound = true;
-        g.last_error = None;
+        g.udp_bound = true;
+        g.udp_last_error = None;
     }
     tracing::info!(%listen_addr, "DNS UDP listening");
 
@@ -108,17 +114,30 @@ pub async fn run_dns_loop(
     }
 }
 
-pub async fn run_dns_tcp_loop(shared: Arc<DnsLoopShared>) -> anyhow::Result<()> {
+pub async fn run_dns_tcp_loop(
+    shared: Arc<DnsLoopShared>,
+    runtime: Arc<RwLock<DnsRuntimeState>>,
+) -> anyhow::Result<()> {
     let listen_addr = { shared.config.read().await.dns.listen_addr };
     let listener = match TcpListener::bind(listen_addr).await {
         Ok(l) => l,
         Err(e) => {
+            {
+                let mut g = runtime.write().await;
+                g.tcp_bound = false;
+                g.tcp_last_error = Some(e.to_string());
+            }
             tracing::warn!(error = %e, %listen_addr, "DNS TCP bind failed; idle");
             loop {
                 sleep(Duration::from_secs(86_400)).await;
             }
         }
     };
+    {
+        let mut g = runtime.write().await;
+        g.tcp_bound = true;
+        g.tcp_last_error = None;
+    }
     tracing::info!(%listen_addr, "DNS TCP listening");
 
     let concurrency = Arc::new(Semaphore::new(64));

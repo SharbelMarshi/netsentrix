@@ -129,14 +129,14 @@ pub fn aggregate_stats(conn: &Connection) -> rusqlite::Result<QueryStats> {
         .unwrap_or(0);
     let blocked: i64 = conn
         .query_row(
-            "SELECT COUNT(*) FROM dns_queries WHERE action = 'blocked'",
+            r#"SELECT COUNT(*) FROM dns_queries WHERE action IN ('blocked', 'blocked_forwarded')"#,
             [],
             |r| r.get(0),
         )
         .unwrap_or(0);
     let allowed: i64 = conn
         .query_row(
-            "SELECT COUNT(*) FROM dns_queries WHERE action = 'allowed'",
+            r#"SELECT COUNT(*) FROM dns_queries WHERE action IN ('allowed', 'allowed_cached')"#,
             [],
             |r| r.get(0),
         )

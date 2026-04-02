@@ -46,7 +46,7 @@ pub fn compute(
             "not_active".into()
         }
         EngineStatus::Running => {
-            if !dns.bound {
+            if !dns.udp_bound {
                 reasons.push("dns_not_bound".into());
                 "not_active".into()
             } else if dns_paused {

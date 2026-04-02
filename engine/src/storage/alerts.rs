@@ -13,7 +13,7 @@ pub struct AlertRow {
     pub details_json: Option<String>,
 }
 
-/// Insert a row (e.g. sniffer-driven detections). Returns SQLite row id.
+/// Insert a row (e.g. future detection pipeline). Not used by shipping DNS path; schema only.
 pub fn insert(
     conn: &Connection,
     timestamp_ms: i64,

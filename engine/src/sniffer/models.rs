@@ -1,5 +1,5 @@
-//! Wire/event DTOs for packet intelligence. Always compiled (no `pcap` / capture deps).
-//! Used by the event bus, WebSocket, and optional sniffer pipeline.
+//! Wire/event DTOs reserved for **future** packet intelligence (not used by shipping MVP).
+//! The event bus holds channels for these types; nothing publishes to them yet.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

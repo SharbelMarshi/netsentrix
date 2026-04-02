@@ -27,8 +27,14 @@ struct HealthResponse: Codable, Sendable {
     let engine: String
     let apiListen: String
     let dnsListen: String
+    /// Legacy: UDP listener; same meaning as `dns_udp_bound` when present.
     let dnsBound: Bool
+    /// Nil on older engines — treat as `dnsBound`.
+    let dnsUdpBound: Bool?
+    /// Nil on older engines — unknown; do not infer TCP failure.
+    let dnsTcpBound: Bool?
     let dnsLastError: String?
+    let dnsTcpLastError: String?
     let engineStatus: String
     let suggestedLanIp: String?
     let snifferEnabled: Bool?
@@ -48,7 +54,10 @@ struct HealthResponse: Codable, Sendable {
         case apiListen = "api_listen"
         case dnsListen = "dns_listen"
         case dnsBound = "dns_bound"
+        case dnsUdpBound = "dns_udp_bound"
+        case dnsTcpBound = "dns_tcp_bound"
         case dnsLastError = "dns_last_error"
+        case dnsTcpLastError = "dns_tcp_last_error"
         case engineStatus = "engine_status"
         case suggestedLanIp = "suggested_lan_ip"
         case snifferEnabled = "sniffer_enabled"

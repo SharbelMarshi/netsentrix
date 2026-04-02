@@ -1,28 +1,31 @@
 # NetSentrix — roadmap
 
-## Done (foundation — matches current tree)
+## Done (MVP foundation — current tree)
 
 - Monorepo: `engine/` (Rust), `app/` (SwiftPM), `docs/`, `packaging/macos/`.
 - **Config:** TOML load/save; `NETSENTRIX_CONFIG` or default path via `dirs::config_dir()/NetSentrix/config.toml` (see `docs/architecture.md`).
 - **SQLite:** WAL, foreign keys, `dns_queries`, `devices`, `alerts`, `rules`, `settings` table; indexes on query time/domain/device_id (see `docs/storage-schema.md`).
-- **DNS (UDP):** Parse first question, allow/block lists + DB rules, sinkhole/NXDOMAIN, forward to upstream, log rows, event bus, device upsert from client IP.
-- **API:** Axum on `127.0.0.1`; JSON envelope on most routes; flat `GET /health`; Bearer token on mutating router; WebSocket `/ws` (server).
-- **App:** SwiftUI sidebar + Dashboard, Setup, Devices, Queries, Alerts, Settings; REST client + token file; dark-first UI.
+- **DNS (UDP + TCP):** Same `dns.listen_addr`; single-question parse; allow/block lists + DB rules; sinkhole/NXDOMAIN; forward; **response cache** + metrics; **CNAME chase** on forward path; query log; device upsert from client IP.
+- **Control plane:** `dns_paused` in DNS loops (SERVFAIL); **`POST /pause`** (toggle), **`POST /dns/pause`** / **`POST /dns/resume`** (idempotent); **`POST /engine/restart|stop`** documented no-ops (launchctl for real lifecycle).
+- **Health:** `dns_udp_bound`, `dns_tcp_bound`, legacy `dns_bound` (= UDP), TCP/UDP last errors; engine **`protection`** object (LAN-capable + distinct clients in window); `sniffer_enabled` always **false** (packet capture not shipped).
+- **API:** Axum on loopback; JSON envelope on most routes; flat `GET /health`; Bearer on mutating router; WebSocket **`/ws`** (DNS events).
+- **Stats:** `allowed_queries` counts `allowed` + `allowed_cached`; `blocked_queries` counts `blocked` + `blocked_forwarded`.
+- **App:** SwiftUI shell; REST + **WebSocket** (Queries + Dashboard sparkline); engine-derived protection in `ProductStatusAdapter` with legacy fallback.
 
-## In progress / next (engineering backlog)
+## In progress / next (smaller iterations)
 
-1. **DNS hardening:** Response cache + negative cache; TCP :53 parallel listener; CNAME depth limits (as needed).
-2. **Control plane:** `POST /pause` wired to DNS loop; document `POST /engine/restart|stop` (launchctl vs in-process).
-3. **Health / UX:** Last-client-query age for protection heuristic; Setup/Dashboard copy (engine vs network protection).
-4. **App:** Optional WebSocket client for live Queries; Settings parity (list paths, block policy in UI).
-5. **Packaging:** launchd plist + preflight + Mac mini install doc.
+1. **Settings UI parity:** blocklist/allowlist paths, optional pause controls, listen_addr display-only warnings.
+2. **DNS edge cases:** multi-question packets; TCP/UDP truncation interop under load (validate in the field).
+3. **SQLite:** versioned migrations (`PRAGMA user_version` or migration table).
+4. **Packaging:** Harden preflight automation; signed/notarized artifact when ready (no SMJobBless in near term).
 
 ## Phase 3+ (deferred)
 
-- Sniffer (`--features sniffer`), GeoIP/enrich, behavioral rules + alert generation from rules engine.
+- **Live packet capture** (libpcap or equivalent) — previously sketched; **removed from Cargo** until a deliberate reimplementation. Event DTOs remain for future use.
+- GeoIP/enrich, behavioral rules + alert generation from a real detection pipeline.
 - Signed installer / SMJobBless for production port 53.
 
 ## Explicitly not planned (near term)
 
-- Cloud sync, remote admin UI, binding API to non-localhost.
+- Cloud sync, remote admin UI, binding API to non-localhost without a security review.
 - Copying PacketSniffer code wholesale (reference-only).

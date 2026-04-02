@@ -102,7 +102,9 @@ impl ApiEnvelope<()> {
 #[derive(Debug, Serialize)]
 pub struct StatsResponse {
     pub total_queries: i64,
+    /// `blocked` + `blocked_forwarded` query log rows.
     pub blocked_queries: i64,
+    /// `allowed` + `allowed_cached` query log rows.
     pub allowed_queries: i64,
     pub blocked_percent: f64,
     pub distinct_devices: i64,

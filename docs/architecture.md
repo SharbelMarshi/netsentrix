@@ -2,13 +2,13 @@
 
 ## Separation
 
-- **Engine (NetSentrix Core):** DNS, persistence, localhost JSON API + WebSocket, optional sniffer (feature flag).
+- **Engine (NetSentrix Core):** DNS, persistence, localhost JSON API + WebSocket. **Packet capture is not part of the MVP** (no libpcap feature; `sniffer` module holds DTOs only).
 - **App:** SwiftUI product UI; talks to the engine over HTTP/WebSocket on loopback only.
 
 ## Processes
 
 - One long-running **engine** process on the always-on Mac (production: `launchd`; see `packaging/macos/launchd/`).
-- **App** uses `http://127.0.0.1:<api_port>` (default **8756** in the generated template). The engine exposes WebSocket `GET /ws`; the macOS app may use REST polling until a WS client is wired.
+- **App** uses `http://127.0.0.1:<api_port>` (default **8756** in the generated template). The engine exposes WebSocket `GET /ws`; the macOS app uses REST plus a WebSocket client for live DNS events where enabled.
 
 ## Configuration
 
@@ -26,8 +26,8 @@
 - **UDP** and **TCP** listeners on `dns.listen_addr` (same port; length-prefixed messages on TCP per RFC 1035 §4.2.2).
 - Parses a single uncompressed question in the UDP path; filter; block response or forward.
 - **Caching:** `dns.cache` in config — positive answers use min(first RR TTL, `max_ttl_secs`) with floor `min_ttl_secs`; NXDOMAIN uses `negative_ttl_secs`. Disable with `cache.enabled = false`.
-- **`dns_paused`:** `POST /pause` toggles in-process pause (SERVFAIL, no forward).
-- **Failure mode:** If the DNS socket cannot bind, the loop idles and `GET /health` reports `dns_bound: false`. Router DHCP should fall back to ISP/router DNS when this host is not serving DNS (recommended); strict fail-closed is a future config option.
+- **`dns_paused`:** `POST /pause` toggles in-process pause; **`POST /dns/pause`** / **`POST /dns/resume`** set pause without toggling. When paused, UDP/TCP answer **SERVFAIL** and do not forward.
+- **Failure mode:** If **UDP** DNS cannot bind, the UDP task idles, `GET /health` reports **`dns_udp_bound: false`** (and legacy **`dns_bound: false`**), and **`engine_status`** may be **`error`**. **TCP** bind is tracked separately (`dns_tcp_bound`, `dns_tcp_last_error`). UDP can succeed while TCP fails (e.g. partial port conflict). Router DHCP should fall back when this host is not serving DNS (recommended); strict fail-closed is a future config option.
 
 ## Threat model (local API)
 
@@ -36,7 +36,7 @@
 
 ## Control plane semantics
 
-- **`POST /pause`:** Intended to pause DNS processing in-process (drop or REFUSE) when wired; see `docs/api.md` for current behavior.
+- **`POST /pause` / `POST /dns/pause` / `POST /dns/resume`:** See `docs/api.md` — pause is **wired** in the DNS loops.
 - **`POST /engine/restart` / `POST /engine/stop`:** Treat as **placeholders** until defined; prefer **launchctl** for real process lifecycle. Stopping the engine while the router still points DHCP DNS at this host breaks LAN DNS — document in Setup UI.
 
 ## PacketSniffer

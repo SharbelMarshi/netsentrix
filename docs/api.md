@@ -56,13 +56,15 @@ Invalid or missing Bearer on protected routes → **401 Unauthorized**.
 
 ### `GET /health`
 
-Flat JSON: `version`, `engine`, `api_listen`, `dns_listen`, `dns_bound`, `dns_last_error`, `engine_status` (`starting` \| `running` \| `stopped` \| `error`), `suggested_lan_ip`, `sniffer_enabled`, `alerts_total`, `api_token_file`, `dns_paused`, `last_client_query_ms` (epoch ms of latest `dns_queries` row, or null if none), `recent_client_activity` (true if any query in the last `protection.window_seconds`).
+Flat JSON: `version`, `engine`, `api_listen`, `dns_listen`, **`dns_udp_bound`**, **`dns_tcp_bound`**, **`dns_bound`** (legacy, same as `dns_udp_bound`), **`dns_last_error`** (UDP bind), **`dns_tcp_last_error`** (TCP bind, if any), `engine_status` (`starting` \| `running` \| `stopped` \| `error`), `suggested_lan_ip`, **`sniffer_enabled`** (always **`false`** in MVP — packet capture not shipped), `alerts_total`, `api_token_file`, `dns_paused`, `last_client_query_ms` (epoch ms of latest `dns_queries` row, or null if none), `recent_client_activity` (true if any query in the last `protection.window_seconds`).
 
 **`protection`** (authoritative for UI): `state` (`not_active` \| `partial` \| `active`), `reasons` (machine-readable codes such as `dns_paused`, `dns_not_bound`, `listen_loopback_only`, `no_recent_lan_queries`, `engine_error`, `db_unavailable`), `window_seconds`, `distinct_clients_in_window`, `last_query_ms`, `lan_capable`, `dns_listen`.
 
 ### `GET /stats`
 
 Envelope → `data`: `total_queries`, `blocked_queries`, `allowed_queries`, `blocked_percent`, `distinct_devices`, `alerts_total`, `alerts_last_24h`, `dns_cache_hits`, `dns_cache_misses`.
+
+**Semantics:** `allowed_queries` counts rows with `action` **`allowed`** or **`allowed_cached`**. `blocked_queries` counts **`blocked`** and **`blocked_forwarded`**. Percentages use `total_queries` as the denominator.
 
 ### `GET /queries`
 

@@ -22,6 +22,8 @@ Populated when DNS queries are logged (`device_id` like `ip:…`); rename via AP
 - `domain` TEXT NOT NULL  
 - `query_type`, `action`, `upstream_response`, `latency_ms`  
 
+**`action` (engine):** includes `allowed`, `allowed_cached`, `blocked`, `blocked_forwarded`, etc. **`GET /stats`** maps `allowed_queries` / `blocked_queries` to those sets — see `docs/api.md`.
+
 **Indexes:** `idx_dns_queries_ts` (`timestamp`), `idx_dns_queries_domain` (`domain`), `idx_dns_queries_device_id` (`device_id`).
 
 ### `alerts`

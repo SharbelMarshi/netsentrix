@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.netsentrix.engine</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/local/bin/netsentrix-engine</string>
+	</array>
+	<!-- Optional: force config path (otherwise engine uses default dirs::config_dir path). -->
+	<!--
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>NETSENTRIX_CONFIG</key>
+		<string>/usr/local/etc/NetSentrix/config.toml</string>
+	</dict>
+	-->
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>StandardOutPath</key>
+	<string>/var/log/netsentrix-engine.log</string>
+	<key>StandardErrorPath</key>
+	<string>/var/log/netsentrix-engine.err</string>
+	<key>ThrottleInterval</key>
+	<integer>10</integer>
+	<key>WorkingDirectory</key>
+	<string>/var/root</string>
+</dict>
+</plist>

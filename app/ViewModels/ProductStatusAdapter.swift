@@ -1,0 +1,324 @@
+import Foundation
+
+// MARK: - Product-facing status (derived from engine health + stats)
+//
+// When `GET /health` includes `protection`, that object is the source of truth for the
+// protection tier; the app only falls back to legacy heuristics for older engines.
+
+enum ProductEngineState: String {
+    case starting = "Starting"
+    case running = "Running"
+    case stopped = "Stopped"
+    case error = "Error"
+}
+
+enum ProductProtectionState: String {
+    case active = "Active"
+    case partial = "Partial"
+    case notActive = "Not Active"
+}
+
+enum ProductTrafficState: String {
+    case receiving = "Receiving Traffic"
+    case noneYet = "No Traffic Yet"
+}
+
+enum ProductSetupState: String {
+    case complete = "Complete"
+    case incomplete = "Incomplete"
+    case needsAttention = "Needs Attention"
+}
+
+struct ProductStatusSnapshot: Sendable {
+    let engine: ProductEngineState
+    let protection: ProductProtectionState
+    let traffic: ProductTrafficState
+    let setup: ProductSetupState
+
+    let protectionReason: String
+    let protectionNextStep: String?
+
+    let setupReason: String
+    let setupNextStep: String?
+
+    /// User-facing engine line (e.g. "Running").
+    let engineTitle: String
+    /// Plain-language DNS / listener summary for primary UI.
+    let dnsSummaryPrimary: String
+}
+
+enum ProductStatusAdapter {
+    static func snapshot(
+        health: HealthResponse?,
+        stats: StatsPayload?,
+        lastQuery: DnsQueryItem?,
+        healthFetchFailed: Bool,
+        healthErrorMessage: String?
+    ) -> ProductStatusSnapshot {
+        let engine = resolveEngine(health: health, healthFetchFailed: healthFetchFailed)
+        let totalQ = stats.map(\.totalQueries) ?? 0
+        let dnsPaused = health?.dnsPaused == true
+        let dnsBound = health?.dnsBound == true
+        let running = health.map { $0.engineStatus.lowercased() == "running" } ?? false
+        let starting = health.map { $0.engineStatus.lowercased() == "starting" } ?? false
+        let stopped = health.map { $0.engineStatus.lowercased() == "stopped" } ?? false
+        let dnsErr = health?.dnsLastError?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hasDnsError = !(dnsErr ?? "").isEmpty
+
+        let (protection, pReason, pNext) = resolveProtection(
+            health: health,
+            engine: engine,
+            dnsBound: dnsBound,
+            dnsPaused: dnsPaused,
+            running: running,
+            starting: starting,
+            stopped: stopped,
+            totalQueries: totalQ,
+            healthFetchFailed: healthFetchFailed,
+            hasDnsError: hasDnsError
+        )
+
+        let traffic: ProductTrafficState = resolveTraffic(
+            health: health,
+            protection: health?.protection,
+            totalQueries: totalQ
+        )
+
+        let (setup, sReason, sNext) = resolveSetup(
+            health: health,
+            healthFetchFailed: healthFetchFailed,
+            dnsBound: dnsBound,
+            dnsPaused: dnsPaused,
+            running: running,
+            stopped: stopped,
+            totalQueries: totalQ,
+            hasDnsError: hasDnsError,
+            healthErrorMessage: healthErrorMessage,
+            protection: health?.protection
+        )
+
+        let engineTitle = engine.rawValue
+        let dnsSummaryPrimary = dnsSummary(
+            health: health,
+            dnsBound: dnsBound,
+            dnsPaused: dnsPaused,
+            running: running,
+            healthFetchFailed: healthFetchFailed
+        )
+
+        return ProductStatusSnapshot(
+            engine: engine,
+            protection: protection,
+            traffic: traffic,
+            setup: setup,
+            protectionReason: pReason,
+            protectionNextStep: pNext,
+            setupReason: sReason,
+            setupNextStep: sNext,
+            engineTitle: engineTitle,
+            dnsSummaryPrimary: dnsSummaryPrimary
+        )
+    }
+
+    private static func resolveEngine(health: HealthResponse?, healthFetchFailed: Bool) -> ProductEngineState {
+        if healthFetchFailed { return .error }
+        guard let h = health else { return .starting }
+        switch h.engineStatus.lowercased() {
+        case "starting": return .starting
+        case "running": return .running
+        case "stopped": return .stopped
+        case "error": return .error
+        default: return .running
+        }
+    }
+
+    private static func resolveTraffic(
+        health: HealthResponse?,
+        protection: ProtectionSummaryDTO?,
+        totalQueries: Int64
+    ) -> ProductTrafficState {
+        if let p = protection, p.state.lowercased() == "active" {
+            return .receiving
+        }
+        if totalQueries > 0 { return .receiving }
+        if health?.recentClientActivity == true { return .receiving }
+        if let p = protection, p.distinctClientsInWindow > 0 {
+            return .receiving
+        }
+        return .noneYet
+    }
+
+    private static func reasonLine(for code: String) -> String {
+        switch code {
+        case "engine_starting": return "The engine is still starting."
+        case "engine_stopped": return "The engine is stopped."
+        case "engine_error": return "The engine reported an error (for example DNS could not bind)."
+        case "dns_not_bound": return "DNS is not listening, so clients cannot use this resolver."
+        case "dns_paused": return "DNS answering is paused; clients receive errors instead of filtered DNS."
+        case "listen_loopback_only": return "DNS is bound to loopback only — network devices cannot reach it."
+        case "no_recent_lan_queries": return "No recent DNS queries from LAN clients were seen in the verification window."
+        case "db_unavailable": return "Could not read verification data from the engine database."
+        default: return "Code: \(code)"
+        }
+    }
+
+    private static func protectionCopy(from p: ProtectionSummaryDTO, health: HealthResponse?) -> (String, String?) {
+        let lines = p.reasons.map { reasonLine(for: $0) }
+        let body = lines.isEmpty ? "See engine status for details." : lines.joined(separator: " ")
+        var next: String?
+        if p.reasons.contains("listen_loopback_only") {
+            next = "Set dns.listen_addr to your LAN interface or 0.0.0.0:53 (see engine config), then reload."
+        } else if p.reasons.contains("dns_not_bound") {
+            next = "Fix the DNS bind error (port, permissions), then check health again."
+        } else if p.reasons.contains("no_recent_lan_queries") {
+            next = "Point your router’s DHCP DNS at this Mac, renew leases, and wait for queries (see Setup)."
+        } else if p.reasons.contains("dns_paused") {
+            next = "Call POST /dns/resume on the engine API to resume normal DNS."
+        } else if p.state.lowercased() == "active" {
+            next = "Devices using plain DNS on your LAN are filtered here. DoH/DoT and per-device DNS can still bypass this."
+        }
+        if let msg = health?.dnsLastError, !msg.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           p.reasons.contains("dns_not_bound") || p.reasons.contains("engine_error") {
+            next = (next.map { $0 + "\n" } ?? "") + "Details: \(msg)"
+        }
+        return (body, next)
+    }
+
+    private static func resolveProtection(
+        health: HealthResponse?,
+        engine: ProductEngineState,
+        dnsBound: Bool,
+        dnsPaused: Bool,
+        running: Bool,
+        starting: Bool,
+        stopped: Bool,
+        totalQueries: Int64,
+        healthFetchFailed: Bool,
+        hasDnsError: Bool
+    ) -> (ProductProtectionState, String, String?) {
+        if healthFetchFailed {
+            return (.notActive, "Can’t tell — the NetSentrix engine isn’t reachable.", "Start NetSentrix Core on this Mac and try again.")
+        }
+        if let p = health?.protection {
+            let ui: ProductProtectionState
+            switch p.state.lowercased() {
+            case "active": ui = .active
+            case "partial": ui = .partial
+            default: ui = .notActive
+            }
+            let (reason, next) = protectionCopy(from: p, health: health)
+            return (ui, reason, next)
+        }
+        if dnsPaused {
+            return (.notActive, "DNS is paused — clients receive errors instead of filtered DNS.", "Turn off pause in engine controls (when available) or restart the engine with DNS answering enabled.")
+        }
+        if hasDnsError, let msg = health?.dnsLastError, !msg.isEmpty {
+            return (.notActive, "DNS couldn’t bind or encountered an error.", "Check the DNS listen address in engine config and that the port is free. Details: \(msg)")
+        }
+        if stopped || engine == .stopped {
+            return (.notActive, "The engine is stopped — your network isn’t using NetSentrix for DNS.", "Start the NetSentrix engine.")
+        }
+        if starting || engine == .starting {
+            return (.partial, "The engine is still starting.", "Wait a few seconds, then refresh.")
+        }
+        if !dnsBound {
+            return (.notActive, "NetSentrix is not protecting your network yet — DNS isn’t listening on the configured interface.", "Fix DNS bind (permissions/port) in engine config, then finish router setup.")
+        }
+        if running && dnsBound && totalQueries > 0 {
+            return (.active, "Protection is active — DNS traffic is flowing through NetSentrix.", nil)
+        }
+        if running && dnsBound && totalQueries == 0 {
+            return (.partial, "Protection is partial — the engine is ready, but no DNS queries have been detected yet.", "Configure your router’s DHCP DNS to this Mac’s IP (Setup), renew leases, then wait for activity.")
+        }
+        return (.notActive, "Protection isn’t active yet.", "Open Setup to finish activating protection.")
+    }
+
+    private static func resolveSetup(
+        health: HealthResponse?,
+        healthFetchFailed: Bool,
+        dnsBound: Bool,
+        dnsPaused: Bool,
+        running: Bool,
+        stopped: Bool,
+        totalQueries: Int64,
+        hasDnsError: Bool,
+        healthErrorMessage: String?,
+        protection: ProtectionSummaryDTO?
+    ) -> (ProductSetupState, String, String?) {
+        if healthFetchFailed {
+            let hint = healthErrorMessage.map { " (\($0))" } ?? ""
+            return (.needsAttention, "Can’t reach the engine.\(hint)", "Start NetSentrix Core and confirm the API is listening on this machine.")
+        }
+        if let p = protection, p.state.lowercased() == "active" {
+            return (
+                .complete,
+                "Engine reports active protection — LAN clients are using NetSentrix for DNS in the verification window.",
+                "Remember: DoH/DoT or manual DNS on a device can still bypass filtering."
+            )
+        }
+        if dnsPaused {
+            return (.needsAttention, "DNS answering is paused.", "Resume normal DNS operation before validating setup.")
+        }
+        if hasDnsError {
+            return (.needsAttention, "DNS service needs attention before clients can use NetSentrix.", "Resolve the DNS bind error shown in Engine details, then try again.")
+        }
+        if stopped {
+            return (.needsAttention, "The engine is stopped.", "Start the engine, then continue router DNS setup.")
+        }
+        if dnsBound && totalQueries > 0 {
+            return (.complete, "Router DNS appears in use — queries are reaching NetSentrix.", nil)
+        }
+        if dnsBound && totalQueries == 0 {
+            return (.incomplete, "The engine is listening, but no queries have been logged.", "Point DHCP DNS at this host and reconnect devices (see Setup steps).")
+        }
+        return (.incomplete, "DNS isn’t listening yet — protection can’t activate.", "Fix engine DNS bind, then set your router to this Mac’s IP.")
+    }
+
+    private static func dnsSummary(
+        health: HealthResponse?,
+        dnsBound: Bool,
+        dnsPaused: Bool,
+        running: Bool,
+        healthFetchFailed: Bool
+    ) -> String {
+        if healthFetchFailed { return "Unknown — engine unreachable." }
+        if health?.engineStatus.lowercased() == "error" {
+            return "Engine error — check DNS bind and engine logs."
+        }
+        if dnsPaused { return "Paused — not accepting DNS." }
+        if !running { return "Engine not running — DNS inactive." }
+        if dnsBound, let listen = health?.dnsListen {
+            return "NetSentrix is accepting DNS on \(listen)."
+        }
+        if let listen = health?.dnsListen {
+            return "DNS is not listening yet (configured: \(listen))."
+        }
+        return "DNS status unknown."
+    }
+
+    static func formattedRelativeTime(epochMs: Int64) -> String {
+        let date = Date(timeIntervalSince1970: Double(epochMs) / 1000.0)
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .full
+        return f.localizedString(for: date, relativeTo: Date())
+    }
+
+    static func formattedAbsoluteTime(epochMs: Int64) -> String {
+        let date = Date(timeIntervalSince1970: Double(epochMs) / 1000.0)
+        let f = DateFormatter()
+        f.dateStyle = .medium
+        f.timeStyle = .medium
+        return f.string(from: date)
+    }
+
+    static func blockPolicyDescription(_ raw: String) -> String {
+        switch raw.lowercased() {
+        case "a_zero":
+            return "Returns 0.0.0.0 (and :: for AAAA) — fast, silent blocking."
+        case "nx_domain":
+            return "Returns NXDOMAIN — more standards-like blocked response."
+        default:
+            return raw
+        }
+    }
+}

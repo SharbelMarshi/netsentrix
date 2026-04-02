@@ -1,0 +1,19 @@
+.DS_Store
+*.swp
+*.mmdb
+
+# Rust
+engine/target/
+engine/**/*.rs.bk
+
+# Swift / SPM
+app/.build/
+app/.swiftpm/
+
+# Local engine data
+*.db
+*.db-journal
+
+# Xcode (if added later)
+**/DerivedData/
+*.xcuserstate

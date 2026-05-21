@@ -130,6 +130,15 @@ else
 fi
 echo ""
 
+echo "9) Swift app (optional)"
+if command -v swift >/dev/null 2>&1; then
+  echo "   OK: swift $(swift --version 2>&1 | head -1)"
+  echo "   Build: (cd app && swift build) — see app/Package.swift."
+else
+  echo "   SKIP: swift not in PATH (install Xcode / CLT for the macOS UI)."
+fi
+echo ""
+
 echo "=== Checklist (summary) ==="
 echo " - Port 53: engine needs root for privileged bind; verify UDP+TCP with GET /health, not only lsof."
 echo " - Token: GUI app must read the same api.token the engine wrote (NETSENTRIX_DATA_DIR or shared permissions)."

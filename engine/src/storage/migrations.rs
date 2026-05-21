@@ -7,7 +7,7 @@
 use rusqlite::Connection;
 
 /// Schema version stored in SQLite after all pending migrations run.
-pub const CURRENT_SCHEMA_VERSION: i32 = 1;
+pub const CURRENT_SCHEMA_VERSION: i32 = 3;
 
 fn read_user_version(conn: &Connection) -> rusqlite::Result<i32> {
     conn.query_row("PRAGMA user_version", [], |row| row.get(0))
@@ -33,6 +33,8 @@ pub fn run_migrations(conn: &Connection) -> rusqlite::Result<()> {
         let next = v + 1;
         match next {
             1 => apply_migration_1(conn)?,
+            2 => apply_migration_2(conn)?,
+            3 => apply_migration_3(conn)?,
             _ => {
                 return Err(rusqlite::Error::SqliteFailure(
                     rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_ERROR),
@@ -105,6 +107,37 @@ fn apply_migration_1(conn: &Connection) -> rusqlite::Result<()> {
         CREATE INDEX IF NOT EXISTS idx_dns_queries_domain ON dns_queries(domain);
         CREATE INDEX IF NOT EXISTS idx_dns_queries_device_id ON dns_queries(device_id);
         CREATE INDEX IF NOT EXISTS idx_alerts_ts ON alerts(timestamp);
+        "#,
+    )?;
+    Ok(())
+}
+
+/// Per-device DNS policy: `normal` | `restricted` (allowlist-only) | `paused` (SERVFAIL) | `blocked` (sinkhole).
+fn apply_migration_2(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(
+        r#"ALTER TABLE devices ADD COLUMN dns_policy TEXT NOT NULL DEFAULT 'normal';"#,
+    )?;
+    Ok(())
+}
+
+fn apply_migration_3(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch(
+        r#"
+        ALTER TABLE devices ADD COLUMN tags TEXT NOT NULL DEFAULT '';
+        CREATE TABLE IF NOT EXISTS dns_time_overrides (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            scope_device_id TEXT,
+            start_min INTEGER NOT NULL,
+            end_min INTEGER NOT NULL,
+            dns_policy TEXT NOT NULL,
+            enabled INTEGER NOT NULL DEFAULT 1
+        );
+        CREATE INDEX IF NOT EXISTS idx_dns_time_overrides_scope ON dns_time_overrides(scope_device_id);
+        CREATE TABLE IF NOT EXISTS domain_feedback (
+            domain TEXT PRIMARY KEY,
+            verdict TEXT NOT NULL,
+            updated_ms INTEGER NOT NULL
+        );
         "#,
     )?;
     Ok(())

@@ -50,9 +50,13 @@ struct EngineAPIClient: Sendable {
         return d
     }
 
-    func queries(limit: Int = 50) async throws -> [DnsQueryItem] {
+    func queries(limit: Int = 50, deviceId: String? = nil) async throws -> [DnsQueryItem] {
         var c = URLComponents(url: baseURL.appendingPathComponent("queries"), resolvingAgainstBaseURL: false)!
-        c.queryItems = [URLQueryItem(name: "limit", value: String(limit))]
+        var items = [URLQueryItem(name: "limit", value: String(limit))]
+        if let deviceId, !deviceId.isEmpty {
+            items.append(URLQueryItem(name: "device_id", value: deviceId))
+        }
+        c.queryItems = items
         let env: ApiEnvelope<[DnsQueryItem]> = try await get(url: c.url!, decode: ApiEnvelope<[DnsQueryItem]>.self)
         guard env.ok, let d = env.data else {
             throw EngineAPIError.apiError(env.error?.code ?? "unknown", env.error?.message ?? "queries failed")
@@ -86,6 +90,50 @@ struct EngineAPIClient: Sendable {
         return d
     }
 
+    /// `GET /insights/daily` — bounded aggregates (no auth).
+    func insightsDaily(hours: UInt32? = nil) async throws -> InsightsDailyDTO {
+        var c = URLComponents(url: baseURL.appendingPathComponent("insights/daily"), resolvingAgainstBaseURL: false)!
+        if let h = hours {
+            c.queryItems = [URLQueryItem(name: "hours", value: String(h))]
+        }
+        guard let url = c.url else { throw EngineAPIError.invalidURL }
+        let env: ApiEnvelope<InsightsDailyDTO> = try await get(url: url, decode: ApiEnvelope<InsightsDailyDTO>.self)
+        guard env.ok, let d = env.data else {
+            throw EngineAPIError.apiError(env.error?.code ?? "unknown", env.error?.message ?? "insights failed")
+        }
+        return d
+    }
+
+    /// `GET /queries/export.csv` — Bearer required.
+    func exportQueriesCSV(hours: UInt32 = 24, limit: UInt32 = 10_000) async throws -> Data {
+        var c = URLComponents(url: baseURL.appendingPathComponent("queries/export.csv"), resolvingAgainstBaseURL: false)!
+        c.queryItems = [
+            URLQueryItem(name: "hours", value: String(hours)),
+            URLQueryItem(name: "limit", value: String(limit)),
+        ]
+        guard let url = c.url else { throw EngineAPIError.invalidURL }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 60
+        if let t = token() {
+            req.setValue("Bearer \(t)", forHTTPHeaderField: "Authorization")
+        }
+        let (data, resp) = try await URLSession.shared.data(for: req)
+        guard let http = resp as? HTTPURLResponse else { throw EngineAPIError.badStatus(-1) }
+        if http.statusCode == 401 { throw EngineAPIError.unauthorized }
+        guard (200 ..< 300).contains(http.statusCode) else { throw EngineAPIError.badStatus(http.statusCode) }
+        return data
+    }
+
+    /// `POST /feedback/domain` — user “safe” / “suspicious” for classifier merge (FG3).
+    func postDomainFeedback(pattern: String, verdict: String) async throws {
+        struct B: Encodable {
+            let pattern: String
+            let verdict: String
+        }
+        let url = baseURL.appendingPathComponent("feedback/domain", isDirectory: false)
+        try await postJSON(url: url, body: B(pattern: pattern, verdict: verdict))
+    }
+
     func settings() async throws -> SettingsPayload {
         let env: ApiEnvelope<SettingsPayload> = try await get(path: "settings", decode: ApiEnvelope<SettingsPayload>.self)
         guard env.ok, let d = env.data else {
@@ -116,11 +164,27 @@ struct EngineAPIClient: Sendable {
         try await postJSONExpectOk(url: baseURL.appendingPathComponent("dns/resume", isDirectory: false), body: EmptyJSON())
     }
 
-    func patchDeviceName(id: String, name: String) async throws {
-        struct Body: Encodable { let name: String }
+    func patchDevice(id: String, name: String? = nil, dnsPolicy: String? = nil, tags: String? = nil) async throws {
+        struct Body: Encodable {
+            var name: String?
+            var dnsPolicy: String?
+            var tags: String?
+            enum CodingKeys: String, CodingKey {
+                case name
+                case dnsPolicy = "dns_policy"
+                case tags
+            }
+            func encode(to encoder: Encoder) throws {
+                var c = encoder.container(keyedBy: CodingKeys.self)
+                try c.encodeIfPresent(name, forKey: .name)
+                try c.encodeIfPresent(dnsPolicy, forKey: .dnsPolicy)
+                try c.encodeIfPresent(tags, forKey: .tags)
+            }
+        }
+        guard name != nil || dnsPolicy != nil || tags != nil else { return }
         let enc = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
         let url = baseURL.appendingPathComponent("devices", isDirectory: false).appendingPathComponent(enc, isDirectory: false)
-        try await postJSON(method: "PATCH", url: url, body: Body(name: name))
+        try await postJSON(method: "PATCH", url: url, body: Body(name: name, dnsPolicy: dnsPolicy, tags: tags))
     }
 
     /// POST `/block` — inserts `dns_block` rule and reloads the in-memory filter.

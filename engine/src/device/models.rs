@@ -10,4 +10,8 @@ pub struct DeviceRow {
     pub last_seen: Option<i64>,
     pub is_active: bool,
     pub is_protected: bool,
+    /// `normal` | `restricted` | `paused` | `blocked`
+    pub dns_policy: String,
+    /// Comma-separated tags (FG4), e.g. `Child,Guest`.
+    pub tags: String,
 }

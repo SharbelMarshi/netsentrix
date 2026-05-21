@@ -38,6 +38,10 @@ Or open `app/Package.swift` in Xcode and run the `NetSentrix` executable target.
 
 **Note:** `swift build` does not support `#Preview` macros; previews are omitted so CLI builds succeed. Re-add `#Preview` in Xcode-only targets if desired.
 
+**Shortcuts:** `Makefile` at repo root (`make engine`, `make app`, `make test-engine`, `make test-app`). **CI** runs `cargo clippy`, `cargo test`, and `swift build` (see `.github/workflows/ci.yml`).
+
+**Misc:** A stray `package-lock.json` at the repo root is not part of the Rust/Swift workflow; remove or ignore unless you add a Node-based tool.
+
 ## Status
 
 **Engine:** localhost Axum API (health + envelope routes), SQLite (WAL + **`user_version` migrations** in `engine/src/storage/migrations.rs`), **UDP and TCP DNS** on `dns.listen_addr`, response **cache**, list + DB rules, query logging, **engine-derived `protection` on `/health`**, `dns_paused` + `/pause` and `/dns/pause`/`/dns/resume`, event bus + **WebSocket `/ws`**. **Packet capture (sniffer)** is **not shipped** — no Cargo feature; `engine/src/sniffer/` holds event DTOs for future work only. **Enrich** and **behavioral rules** trees are **stubs**. **App:** SwiftUI shell with Dashboard, Setup, Devices (rename uses Bearer), Queries (REST + live WS), Alerts, Settings. API token: `~/Library/Application Support/NetSentrix/api.token` (same dir family as `dirs::data_dir()`). **Dev vs prod:** API defaults to port **8756**; DNS often uses a **non-53** port in the template — set `dns.listen_addr` to `:53` for LAN service (requires privileges). See `docs/roadmap.md`, `docs/architecture.md`, `docs/api.md`.

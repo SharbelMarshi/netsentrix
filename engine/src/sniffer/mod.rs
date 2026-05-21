@@ -1,7 +1,15 @@
 //! Packet capture / live traffic analysis — **not part of the shipping MVP**.
 //!
-//! Libpcap-based capture was never completed and is **quarantined** (see `Cargo.toml`: no
-//! `sniffer` feature). This module only exposes **event DTOs** shared with [`crate::events::bus`]
-//! for future phases. Do not add capture dependencies here without a deliberate product decision.
+//! Event DTOs are shared with [`crate::events::bus`]. Optional work is gated behind the
+//! **`sniffer_capture`** Cargo feature (see `Cargo.toml`); `GET /health` **`sniffer_enabled`**
+//! remains **`false`** until a verified capture loop is implemented.
+//!
+//! Permissions and platform notes: `docs/sniffer-permissions.md` (repo root).
 
 pub mod models;
+
+/// `true` only when live capture is running and verified (Phase 6+).
+pub fn sniffer_enabled_for_health() -> bool {
+    let _reserved = cfg!(feature = "sniffer_capture");
+    false
+}

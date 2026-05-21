@@ -1,5 +1,20 @@
 import Foundation
 
+/// Setup / misconfiguration hint from `GET /health` → `setup_hints`.
+struct SetupHintDTO: Codable, Sendable, Identifiable {
+    var id: String { code }
+    let code: String
+    let severity: String
+    let title: String
+    let detail: String
+    let suggestedFix: String?
+
+    enum CodingKeys: String, CodingKey {
+        case code, severity, title, detail
+        case suggestedFix = "suggested_fix"
+    }
+}
+
 /// Engine-computed protection summary (`GET /health` → `protection`).
 struct ProtectionSummaryDTO: Codable, Sendable {
     let state: String
@@ -70,6 +85,8 @@ struct HealthResponse: Codable, Sendable {
     let dnsPaused: Bool?
     /// Authoritative protection state from the engine; nil if talking to an older engine.
     let protection: ProtectionSummaryDTO?
+    /// Actionable setup guidance; empty or absent on older engines.
+    let setupHints: [SetupHintDTO]?
 
     enum CodingKeys: String, CodingKey {
         case ok, version, engine
@@ -92,5 +109,6 @@ struct HealthResponse: Codable, Sendable {
         case recentClientActivity = "recent_client_activity"
         case dnsPaused = "dns_paused"
         case protection
+        case setupHints = "setup_hints"
     }
 }

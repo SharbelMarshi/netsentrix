@@ -203,7 +203,8 @@ enum ProductStatusAdapter {
         } else if p.reasons.contains("dns_not_bound") {
             next = "Fix the DNS bind error (port, permissions), then check health again."
         } else if p.reasons.contains("no_recent_lan_queries") {
-            next = "Point your router’s DHCP DNS at this Mac, renew leases, and wait for queries (see Setup)."
+            next =
+                "Point your router’s DHCP DNS at this Mac, renew leases, and wait for queries (see Setup). Devices using DoH, IPv6 DNS outside DHCP, VPNs, or manual resolvers may not appear here — that is visibility, not silent protection."
         } else if p.reasons.contains("dns_paused") {
             next = "Call POST /dns/resume on the engine API to resume normal DNS."
         } else if p.state.lowercased() == "active" {

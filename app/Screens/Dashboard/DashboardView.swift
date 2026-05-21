@@ -1,3 +1,4 @@
+import Charts
 import SwiftUI
 
 private struct NetsentrixCard<Content: View>: View {
@@ -27,6 +28,7 @@ private struct NetsentrixCard<Content: View>: View {
 
 struct DashboardView: View {
     @EnvironmentObject private var engine: EngineService
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var lastRefreshedAt = Date()
     @State private var showTechnical = false
 
@@ -54,12 +56,28 @@ struct DashboardView: View {
                         protectionBlock(snap: snap)
                     }
 
+                    if let hints = engine.lastHealth?.setupHints, !hints.isEmpty {
+                        NetsentrixCard(title: "Setup & diagnostics") {
+                            setupHintsBlock(hints: hints)
+                        }
+                    }
+
                     NetsentrixCard(title: "Engine") {
                         engineBlock(snap: snap)
                     }
 
                     NetsentrixCard(title: "Traffic") {
                         trafficBlock(snap: snap)
+                    }
+
+                    if let ins = engine.lastInsights, !ins.topDomains.isEmpty {
+                        NetsentrixCard(title: "Usage insights (rolling \(ins.windowHours)h)") {
+                            insightsBlock(ins: ins)
+                        }
+                    } else if let ie = engine.insightsFetchError {
+                        NetsentrixCard(title: "Usage insights") {
+                            Text(ie).font(.caption).foregroundStyle(Theme.warning)
+                        }
                     }
 
                     NetsentrixCard(title: "DNS cache & performance") {
@@ -185,6 +203,91 @@ struct DashboardView: View {
                     .foregroundStyle(Theme.textSecondary)
             }
         }
+    }
+
+    @ViewBuilder
+    private func setupHintsBlock(hints: [SetupHintDTO]) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Engine-derived hints — not a guarantee about every device or bypass path.")
+                .font(.caption2)
+                .foregroundStyle(Theme.textSecondary)
+            ForEach(Array(hints.enumerated()), id: \.offset) { idx, h in
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(h.title)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(h.severity == "warning" ? Theme.warning : Theme.textPrimary)
+                        if h.severity == "warning" {
+                            Text("Warning")
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(Theme.warning)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Capsule().fill(Theme.warning.opacity(0.15)))
+                        }
+                    }
+                    Text(h.detail)
+                        .font(.caption)
+                        .foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let fix = h.suggestedFix, !fix.isEmpty {
+                        Text(fix)
+                            .font(.caption)
+                            .foregroundStyle(Theme.accent)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .padding(.vertical, 4)
+                if idx + 1 < hints.count {
+                    Divider().opacity(0.35)
+                }
+            }
+        }
+    }
+
+    private func insightsBlock(ins: InsightsDailyDTO) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let h = ins.peakHourLocal {
+                Text("Peak local hour: \(h):00 · \(ins.peakHourQueryCount) queries sampled in window")
+                    .font(.caption)
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            if !ins.topDevices.isEmpty {
+                Text("Top devices (by query count)")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Theme.textSecondary)
+                ForEach(Array(ins.topDevices.prefix(5)), id: \.deviceId) { d in
+                    HStack {
+                        Text(insightsDeviceLabel(d.deviceId)).lineLimit(1)
+                        Spacer()
+                        Text("\(d.queryCount)").font(.caption.monospaced())
+                    }
+                    .font(.caption)
+                }
+            }
+            Text("Top domains")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Theme.textSecondary)
+            Chart(Array(ins.topDomains.prefix(8))) { row in
+                BarMark(
+                    x: .value("Queries", row.queryCount),
+                    y: .value("Domain", row.domain)
+                )
+                .foregroundStyle(Theme.accent.opacity(0.85))
+            }
+            .chartXAxisLabel("Queries", position: .bottom, alignment: .center)
+            .frame(height: 200)
+            .animation(reduceMotion ? nil : .default, value: ins.untilMs)
+
+            Text("Family labels are bundled rules only — not live threat feeds.")
+                .font(.caption2)
+                .foregroundStyle(Theme.textSecondary.opacity(0.9))
+        }
+    }
+
+    private func insightsDeviceLabel(_ deviceId: String) -> String {
+        if deviceId.hasPrefix("ip:") { return String(deviceId.dropFirst(3)) }
+        return deviceId
     }
 
     private func engineBlock(snap: ProductStatusSnapshot) -> some View {

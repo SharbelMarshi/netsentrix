@@ -2,11 +2,38 @@ import SwiftUI
 
 struct QueriesView: View {
     @EnvironmentObject private var engine: EngineService
+    @EnvironmentObject private var appModel: AppViewModel
     @State private var lastRefreshedAt = Date()
     @State private var selectedQueryIds = Set<Int64>()
+    /// Stable snapshot for `Table` — updated only when engine data or filters change (avoids identity churn from recomputing `body`).
+    @State private var tableRows: [DnsQueryItem] = []
+
+    private var deviceFilter: String? {
+        let s = appModel.queriesDeviceFilterId?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (s?.isEmpty == false) ? s : nil
+    }
+
+    private var highlightDomain: String? {
+        let s = appModel.queriesHighlightDomain?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (s?.isEmpty == false) ? s : nil
+    }
+
+    private func rebuildTableRows() {
+        var rows = engine.mergedDisplayQueries(deviceFilter: deviceFilter)
+        if let h = highlightDomain?.lowercased() {
+            rows.sort { a, b in
+                let ma = a.domain.lowercased() == h
+                let mb = b.domain.lowercased() == h
+                if ma != mb { return ma && !mb }
+                return a.id > b.id
+            }
+        }
+        tableRows = rows
+        let valid = Set(rows.map(\.id))
+        selectedQueryIds = selectedQueryIds.intersection(valid)
+    }
 
     var body: some View {
-        let displayQueries = engine.mergedDisplayQueries()
         VStack(alignment: .leading, spacing: 12) {
             Text("Queries")
                 .font(.title2.weight(.semibold))
@@ -30,16 +57,47 @@ struct QueriesView: View {
                 .font(.caption2)
                 .foregroundStyle(Theme.textSecondary)
 
+            if deviceFilter != nil || highlightDomain != nil {
+                HStack(alignment: .center, spacing: 10) {
+                    Image(systemName: "line.3.horizontal.decrease.circle")
+                        .foregroundStyle(Theme.accent.opacity(0.9))
+                    VStack(alignment: .leading, spacing: 2) {
+                        if let d = deviceFilter {
+                            Text("Filtered to device \(Self.shortDeviceLabel(d))")
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(Theme.textPrimary)
+                        }
+                        if let h = highlightDomain {
+                            Text("Highlight: \(h)")
+                                .font(.caption2)
+                                .foregroundStyle(Theme.textSecondary)
+                        }
+                    }
+                    Spacer(minLength: 8)
+                    Button("Clear") {
+                        appModel.clearQueriesNavigationContext()
+                        Task {
+                            await engine.refreshQueries(limit: 100, deviceId: nil)
+                            lastRefreshedAt = Date()
+                        }
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(Theme.accent)
+                }
+                .padding(10)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Theme.cardBackground))
+            }
+
             HStack(spacing: 10) {
                 Button("Refresh now") {
                     Task {
-                        await engine.refreshQueries(limit: 100)
+                        await engine.refreshQueries(limit: 100, deviceId: deviceFilter)
                         lastRefreshedAt = Date()
                     }
                 }
                 .disabled(engine.isRefreshingQueries)
 
-                let domain = primarySelectedDomain(in: displayQueries)
+                let domain = primarySelectedDomain(in: tableRows)
                 Button("Block domain") {
                     guard let domain else { return }
                     Task { await engine.blockDomain(domain) }
@@ -84,18 +142,18 @@ struct QueriesView: View {
                     .foregroundStyle(Theme.blocked)
             }
 
-            if engine.hasCompletedInitialQueriesFetch, displayQueries.isEmpty, engine.queriesFetchError == nil {
+            if engine.hasCompletedInitialQueriesFetch, tableRows.isEmpty, engine.queriesFetchError == nil {
                 emptyState
-            } else if !displayQueries.isEmpty {
-                Table(displayQueries, selection: $selectedQueryIds) {
+            } else if !tableRows.isEmpty {
+                Table(tableRows, selection: $selectedQueryIds) {
                     TableColumn("Device") { row in
-                        queryRowChrome(for: row) {
+                        queryRowChrome(for: row, highlightDomain: highlightDomain) {
                             Text(row.deviceId ?? "—").lineLimit(1)
                         }
                         .contextMenu { domainRuleMenu(for: row) }
                     }
                     TableColumn("Domain") { row in
-                        queryRowChrome(for: row) {
+                        queryRowChrome(for: row, highlightDomain: highlightDomain) {
                             HStack(spacing: 6) {
                                 Text(row.domain).lineLimit(1)
                                 outcomeBadge(for: row)
@@ -104,7 +162,7 @@ struct QueriesView: View {
                         .contextMenu { domainRuleMenu(for: row) }
                     }
                     TableColumn("Action") { row in
-                        queryRowChrome(for: row) {
+                        queryRowChrome(for: row, highlightDomain: highlightDomain) {
                             Text(row.action)
                                 .foregroundStyle(
                                     row.isBlockedOutcome
@@ -115,7 +173,7 @@ struct QueriesView: View {
                         .contextMenu { domainRuleMenu(for: row) }
                     }
                     TableColumn("Type") { row in
-                        queryRowChrome(for: row) {
+                        queryRowChrome(for: row, highlightDomain: highlightDomain) {
                             Text(row.queryType)
                         }
                         .contextMenu { domainRuleMenu(for: row) }
@@ -137,18 +195,30 @@ struct QueriesView: View {
         .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Theme.deepNavy)
-        .task {
+        .onChange(of: engine.queriesDisplayRevision) { _ in rebuildTableRows() }
+        .onChange(of: appModel.queriesDeviceFilterId) { _ in rebuildTableRows() }
+        .onChange(of: appModel.queriesHighlightDomain) { _ in rebuildTableRows() }
+        .onAppear { rebuildTableRows() }
+        .task(id: "\(appModel.queriesDeviceFilterId ?? "")|\(appModel.queriesHighlightDomain ?? "")") {
             engine.retainDnsEventsWebSocket()
-            await engine.refreshQueries(limit: 100)
-            lastRefreshedAt = Date()
             defer { engine.releaseDnsEventsWebSocket() }
             while !Task.isCancelled {
+                let trimmed = appModel.queriesDeviceFilterId?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let did = (trimmed?.isEmpty == false) ? trimmed : nil
+                await engine.refreshQueries(limit: 100, deviceId: did)
+                lastRefreshedAt = Date()
+                rebuildTableRows()
                 try? await Task.sleep(nanoseconds: 10_000_000_000)
                 if Task.isCancelled { break }
-                await engine.refreshQueries(limit: 100)
-                lastRefreshedAt = Date()
             }
         }
+    }
+
+    private static func shortDeviceLabel(_ deviceId: String) -> String {
+        if deviceId.hasPrefix("ip:") {
+            return String(deviceId.dropFirst(3))
+        }
+        return deviceId
     }
 
     @ViewBuilder
@@ -203,10 +273,15 @@ struct QueriesView: View {
     }
 
     @ViewBuilder
-    private func queryRowChrome<Content: View>(for row: DnsQueryItem, @ViewBuilder content: () -> Content) -> some View {
+    private func queryRowChrome<Content: View>(for row: DnsQueryItem, highlightDomain: String?, @ViewBuilder content: () -> Content) -> some View {
+        let matchHighlight: Bool = {
+            guard let h = highlightDomain?.lowercased(), !h.isEmpty else { return false }
+            return row.domain.lowercased() == h
+        }()
         let bg: Color = {
             if row.isBlockedOutcome { Theme.blocked.opacity(0.12) }
             else if row.isAllowedOutcome { Theme.allowed.opacity(0.1) }
+            else if matchHighlight { Theme.accent.opacity(0.14) }
             else { Color.clear }
         }()
         content()

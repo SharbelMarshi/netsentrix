@@ -51,12 +51,22 @@ struct SetupView: View {
                     .font(.callout)
                     .foregroundStyle(Theme.textSecondary)
 
+                Text("Full appliance / operator steps live in the repo: `packaging/macos/MAC_MINI_APPLIANCE.md`.")
+                    .font(.caption2)
+                    .foregroundStyle(Theme.textSecondary.opacity(0.9))
+
                 SetupCard(title: "Protection") {
                     if !engine.hasCompletedInitialHealthFetch {
                         Label("Checking…", systemImage: "ellipsis.circle")
                             .foregroundStyle(Theme.textSecondary)
                     } else {
                         protectionSummary(snap: snap)
+                    }
+                }
+
+                if let hints = engine.lastHealth?.setupHints, !hints.isEmpty {
+                    SetupCard(title: "Guided checks") {
+                        setupHintsContent(hints: hints)
                     }
                 }
 
@@ -112,6 +122,35 @@ struct SetupView: View {
                 Text(n)
                     .font(.subheadline.weight(.medium))
                     .foregroundStyle(Theme.accent)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func setupHintsContent(hints: [SetupHintDTO]) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("These messages match what the engine can observe — they are hints, not proof of misconfiguration on every device.")
+                .font(.caption2)
+                .foregroundStyle(Theme.textSecondary)
+            ForEach(Array(hints.enumerated()), id: \.offset) { idx, h in
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(h.title)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(h.severity == "warning" ? Theme.warning : Theme.textPrimary)
+                    Text(h.detail)
+                        .font(.caption)
+                        .foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let fix = h.suggestedFix, !fix.isEmpty {
+                        Text(fix)
+                            .font(.caption)
+                            .foregroundStyle(Theme.accent)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                if idx + 1 < hints.count {
+                    Divider().opacity(0.35)
+                }
             }
         }
     }

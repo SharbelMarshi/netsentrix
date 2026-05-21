@@ -22,6 +22,8 @@ struct SettingsView: View {
     @State private var successBanner: String?
     @State private var protectionWindowHint: String?
     @State private var quickDomainRule = ""
+    @State private var blocklistPathsEdit = ""
+    @State private var allowlistPathsEdit = ""
 
     var body: some View {
         ScrollView {
@@ -33,6 +35,50 @@ struct SettingsView: View {
                 Text("Operator controls for the NetSentrix engine on this Mac. Changes need API access (Bearer token).")
                     .font(.callout)
                     .foregroundStyle(Theme.textSecondary)
+
+                if let h = engine.lastHealth {
+                    GroupBox("Runtime — from engine health") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Read-only snapshot from `GET /health` (same paths the engine reports).")
+                                .font(.caption)
+                                .foregroundStyle(Theme.textSecondary)
+                            if let p = h.configPath, !p.isEmpty {
+                                LabeledContent("Config file") {
+                                    Text(p).font(.caption.monospaced()).textSelection(.enabled)
+                                }
+                            }
+                            if let p = h.netsentrixDataDir, !p.isEmpty {
+                                LabeledContent("Data directory") {
+                                    Text(p).font(.caption.monospaced()).textSelection(.enabled)
+                                }
+                            }
+                            if let p = h.dbPath, !p.isEmpty {
+                                LabeledContent("Database") {
+                                    Text(p).font(.caption.monospaced()).textSelection(.enabled)
+                                }
+                            }
+                            if let p = h.apiTokenFile, !p.isEmpty {
+                                LabeledContent("API token file") {
+                                    Text(p).font(.caption.monospaced()).textSelection(.enabled)
+                                }
+                            }
+                            LabeledContent("API listen") {
+                                Text(h.apiListen).font(.caption.monospaced())
+                            }
+                            LabeledContent("DNS listen") {
+                                Text(h.dnsListen).font(.caption.monospaced())
+                            }
+                            LabeledContent("Engine status") {
+                                Text(h.engineStatus).font(.caption.monospaced())
+                            }
+                            if let paused = h.dnsPaused {
+                                LabeledContent("DNS paused") {
+                                    Text(paused ? "Yes (SERVFAIL)" : "No").font(.caption.monospaced())
+                                }
+                            }
+                        }
+                    }
+                }
 
                 dnsAnsweringGroup
 
@@ -79,6 +125,44 @@ struct SettingsView: View {
                                 successBanner = nil
                                 await engine.saveBlockPolicy(blockPolicySelection.rawValue)
                                 if engine.lastOperationError == nil { successBanner = "Block policy saved." }
+                            }
+                        }
+                        .disabled(engine.isSavingSettings)
+                    }
+                }
+
+                GroupBox("Blocklist & allowlist file paths") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(
+                            "One filesystem path per line (absolute paths recommended). The engine merges these static lists into the live DNS filter when you save or reload from disk."
+                        )
+                        .font(.caption)
+                        .foregroundStyle(Theme.textSecondary)
+                        Text("Blocklist files")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Theme.textPrimary)
+                        TextEditor(text: $blocklistPathsEdit)
+                            .font(.system(.body, design: .monospaced))
+                            .frame(minHeight: 72, maxHeight: 120)
+                            .scrollContentBackground(.hidden)
+                            .padding(6)
+                            .background(RoundedRectangle(cornerRadius: 6).fill(Theme.cardBackground))
+                        Text("Allowlist files")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Theme.textPrimary)
+                        TextEditor(text: $allowlistPathsEdit)
+                            .font(.system(.body, design: .monospaced))
+                            .frame(minHeight: 72, maxHeight: 120)
+                            .scrollContentBackground(.hidden)
+                            .padding(6)
+                            .background(RoundedRectangle(cornerRadius: 6).fill(Theme.cardBackground))
+                        Button("Save list paths") {
+                            Task {
+                                successBanner = nil
+                                let block = pathsFromMultiline(blocklistPathsEdit)
+                                let allow = pathsFromMultiline(allowlistPathsEdit)
+                                await engine.saveBlocklistAllowlistPaths(blocklist: block, allowlist: allow)
+                                if engine.lastOperationError == nil { successBanner = "List paths saved and filter reloaded." }
                             }
                         }
                         .disabled(engine.isSavingSettings)
@@ -163,6 +247,13 @@ struct SettingsView: View {
                 if let s = engine.settings {
                     GroupBox("Read-only — current engine config") {
                         VStack(alignment: .leading, spacing: 8) {
+                            if listenAddrIsLoopbackOnly(s.dns.listenAddr) {
+                                Text(
+                                    "DNS is bound to loopback only. LAN devices cannot use this resolver unless you bind to a LAN address (e.g. 0.0.0.0:53) in config.toml and restart the engine."
+                                )
+                                .font(.caption)
+                                .foregroundStyle(Theme.warning)
+                            }
                             LabeledContent("DNS listen") {
                                 Text(s.dns.listenAddr).font(.body.monospaced())
                             }
@@ -179,6 +270,20 @@ struct SettingsView: View {
                                 Text(s.apiListen).font(.caption.monospaced())
                             }
                         }
+                    }
+                }
+
+                GroupBox("Export query log (CSV)") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text(
+                            "Downloads up to 10,000 recent rows from the engine (default last 24 hours) as CSV. Requires API token — same as other operator actions."
+                        )
+                        .font(.caption)
+                        .foregroundStyle(Theme.textSecondary)
+                        Button("Export queries…") {
+                            engine.exportQueriesCSVUsingSavePanel()
+                        }
+                        .disabled(engine.isEngineUnreachable)
                     }
                 }
 
@@ -317,5 +422,24 @@ struct SettingsView: View {
         if let w = engine.settings?.dns.protectionActivityWindowSecs {
             protectionWindowEdit = String(w)
         }
+        if let dns = engine.settings?.dns {
+            blocklistPathsEdit = dns.blocklistPaths.joined(separator: "\n")
+            allowlistPathsEdit = dns.allowlistPaths.joined(separator: "\n")
+        }
+    }
+
+    private func pathsFromMultiline(_ text: String) -> [String] {
+        text
+            .split(whereSeparator: \.isNewline)
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
+    /// True when the configured DNS socket is IPv4 or IPv6 loopback only (no LAN exposure).
+    private func listenAddrIsLoopbackOnly(_ listen: String) -> Bool {
+        let t = listen.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if t.hasPrefix("127.") || t.contains("127.0.0.1") { return true }
+        if t.hasPrefix("[::1]") || t.hasPrefix("::1") { return true }
+        return false
     }
 }

@@ -7,7 +7,9 @@
 | `user_version` | Meaning |
 |----------------|--------|
 | **0** | Never migrated, or legacy DB from pre-migration builds. |
-| **1** | Baseline tables + indexes (current shipping schema). |
+| **1** | Baseline tables + indexes. |
+| **2** | Adds **`devices.dns_policy`** (`TEXT`, default `normal`) for per-device DNS control (`normal` \| `restricted` \| `paused` \| `blocked`). |
+| **3** | Adds **`devices.tags`** (`TEXT`, default empty); tables **`dns_time_overrides`** (scheduled DNS policy overrides, local wall time); **`domain_feedback`** (`safe` / `suspicious` user hints merged in the classifier). |
 
 `CURRENT_SCHEMA_VERSION` in `migrations.rs` must be bumped when a new migration is added. If a database’s `user_version` is **greater** than the engine expects, startup **fails** with a clear error (avoid running an old binary against a newer schema).
 
@@ -24,6 +26,24 @@ Populated when DNS queries are logged (`device_id` like `ip:…`); rename via AP
 - `mac_address`, `hostname`, `vendor`, `name` TEXT  
 - `first_seen`, `last_seen` INTEGER  
 - `is_active`, `is_protected` INTEGER  
+- **`dns_policy`** TEXT — per-device DNS mode (migration 2+); default `normal`.
+- **`tags`** TEXT — comma-separated operator labels (migration 3+).
+
+### `dns_time_overrides` (migration 3+)
+
+Time-of-day policy applied in **local** wall time by the engine when resolving effective DNS policy.
+
+- `id` INTEGER PRIMARY KEY  
+- `scope_device_id` TEXT NULL — `NULL` = all devices; otherwise must match `devices.id` (e.g. `ip:192.168.1.10`).  
+- `start_min`, `end_min` INTEGER — minute-of-day 0–1439 inclusive; overnight allowed when `start_min > end_min`.  
+- `dns_policy` TEXT — `normal` \| `restricted` \| `paused` \| `blocked`.  
+- `enabled` INTEGER — `1` / `0`.
+
+### `domain_feedback` (migration 3+)
+
+- `domain` TEXT PRIMARY KEY (normalized lowercase)  
+- `verdict` TEXT — `safe` \| `suspicious`  
+- `updated_ms` INTEGER  
 
 ### `dns_queries`
 

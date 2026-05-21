@@ -5,9 +5,15 @@ edition = "2021"
 description = "NetSentrix Core — local DNS and control plane daemon"
 publish = false
 
+[features]
+default = []
+## Reserved for Phase 6+ libpcap (or equivalent) wiring; default builds omit capture.
+sniffer_capture = []
+
 [dependencies]
 anyhow = "1"
 axum = { version = "0.7", features = ["macros", "json", "ws"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 dirs = "5"
 futures-util = "0.3"
 hex = "0.4"

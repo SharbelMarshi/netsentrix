@@ -1,7 +1,9 @@
+use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 
 use crate::config::schema::{BlockPolicy, DnsSection, EngineConfig};
 use crate::device::models::DeviceRow;
+use crate::storage::{devices, time_overrides};
 
 /// Authoritative protection summary (engine-computed).
 #[derive(Debug, Serialize, Clone)]
@@ -17,6 +19,32 @@ pub struct ProtectionSummary {
     pub last_query_ms: Option<i64>,
     pub lan_capable: bool,
     pub dns_listen: String,
+}
+
+/// Actionable setup / misconfiguration hint for clients (Dashboard, Setup).
+#[derive(Debug, Serialize, Clone)]
+pub struct SetupHint {
+    pub code: String,
+    /// `info` | `warning`
+    pub severity: String,
+    pub title: String,
+    pub detail: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suggested_fix: Option<String>,
+}
+
+/// API row for `GET /alerts` (adds derived `priority`).
+#[derive(Debug, Serialize)]
+pub struct AlertResponse {
+    pub id: i64,
+    pub timestamp_ms: i64,
+    pub device_id: Option<String>,
+    pub severity: String,
+    pub category: String,
+    pub message: String,
+    pub details_json: Option<String>,
+    /// `low` | `medium` | `high` — rule-based tier from `severity`.
+    pub priority: String,
 }
 
 impl ProtectionSummary {
@@ -70,6 +98,8 @@ pub struct HealthResponse {
     pub netsentrix_data_dir: String,
     /// SQLite path from active config.
     pub db_path: String,
+    /// Human-readable setup guidance (honest hints, not proof of bypass).
+    pub setup_hints: Vec<SetupHint>,
 }
 
 #[derive(Debug, Serialize)]
@@ -156,9 +186,16 @@ pub struct PatternBody {
     pub pattern: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 pub struct DevicePatchBody {
-    pub name: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    /// `normal` | `restricted` | `paused` | `blocked`
+    #[serde(default)]
+    pub dns_policy: Option<String>,
+    /// Comma-separated tags (e.g. `Child,Guest`); max ~512 chars.
+    #[serde(default)]
+    pub tags: Option<String>,
 }
 
 /// Device row returned by `GET /devices` and `GET /devices/:id` (DNS-visibility MVP).
@@ -174,8 +211,16 @@ pub struct DeviceResponse {
     pub last_seen: Option<i64>,
     /// Currently always `true` on upsert; not a staleness signal until TTL logic exists.
     pub is_active: bool,
-    /// Reserved for future per-device policy — **always `false`** in the DNS-only MVP (do not map to “protected” UX).
+    /// Reserved; do not map to “protected” product UX until semantics exist.
     pub is_protected: bool,
+    /// Per-device DNS control stored in SQLite: `normal`, `restricted` (allowlist-only), `paused` (SERVFAIL), `blocked` (sinkhole).
+    pub dns_policy: String,
+    /// Policy the resolver uses **now** (`dns_policy` plus active `dns_time_overrides` window when applicable).
+    pub effective_dns_policy: String,
+    /// True when a matching enabled time override applies to this device at local wall time.
+    pub schedule_override_active: bool,
+    /// Comma-separated operator tags.
+    pub tags: String,
     /// All `dns_queries` rows for this `device_id` in the database.
     pub query_count_total: i64,
     /// Queries with `timestamp` in the **rolling 24 hours** before the API handler’s `now` (epoch ms).
@@ -202,11 +247,73 @@ impl DeviceResponse {
             last_seen: row.last_seen,
             is_active: row.is_active,
             is_protected: row.is_protected,
+            dns_policy: row.dns_policy.clone(),
+            effective_dns_policy: row.dns_policy.clone(),
+            schedule_override_active: false,
+            tags: row.tags,
             query_count_total: query_total,
             query_count_24h: query_24h,
             recently_seen_dns,
         }
     }
+
+    /// Fills `effective_dns_policy` and `schedule_override_active` from SQLite (time overrides use local wall time).
+    pub fn with_resolved_effective(mut self, conn: &Connection) -> Self {
+        self.effective_dns_policy = devices::resolve_effective_dns_policy(conn, &self.id);
+        self.schedule_override_active =
+            time_overrides::scheduled_override_policy(conn, &self.id).is_some();
+        self
+    }
+}
+
+/// `GET /insights/daily` — bounded aggregates (FG2 / Phase 7).
+#[derive(Debug, Serialize)]
+pub struct InsightsDailyResponse {
+    pub window_hours: u32,
+    pub since_ms: i64,
+    pub until_ms: i64,
+    pub top_devices: Vec<DeviceQueryInsight>,
+    pub top_domains: Vec<DomainInsightRow>,
+    pub peak_hour_local: Option<i32>,
+    pub peak_hour_query_count: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DeviceQueryInsight {
+    pub device_id: String,
+    pub query_count: i64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct DomainInsightRow {
+    pub domain: String,
+    pub query_count: i64,
+    pub explanation: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct TimeOverrideApiRow {
+    pub id: i64,
+    pub scope_device_id: Option<String>,
+    pub start_min: i32,
+    pub end_min: i32,
+    pub dns_policy: String,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TimeOverrideCreateBody {
+    pub scope_device_id: Option<String>,
+    pub start_min: i32,
+    pub end_min: i32,
+    pub dns_policy: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DomainFeedbackCreateBody {
+    pub pattern: String,
+    /// `safe` | `suspicious`
+    pub verdict: String,
 }
 
 /// Export engine config subset for API (clone dns + api listen).

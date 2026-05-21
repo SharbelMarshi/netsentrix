@@ -1,6 +1,6 @@
 //! Simple post-query checks against SQLite. Cooldowns use recent `alerts` rows (same category + scope).
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use rusqlite::{params, Connection};
 use serde_json::json;
@@ -8,7 +8,7 @@ use serde_json::json;
 use crate::sniffer::models::DetectionEvent;
 use crate::storage::{alerts, devices, queries};
 
-use super::classification::{classify_domain, DomainCategory};
+use super::classification::{classify_domain_with_feedback, DomainCategory};
 
 const WINDOW_MS: i64 = 60_000;
 const BURST_THRESHOLD: i64 = 90;
@@ -58,18 +58,55 @@ struct DomainWindowSummary {
     common_distinct_domains: i64,
     unknown_distinct_domains: i64,
     common_family_counts: BTreeMap<&'static str, i64>,
+    /// Top domains by query count in the window (cap ~10) for actionable alert context.
+    top_domains_sample: Vec<String>,
+    /// Unknown-classified domains by query count (cap ~8) for “suspicious” quick actions.
+    top_unknown_domains_sample: Vec<String>,
+}
+
+fn top_domains_by_query_count(domains: &[String], take: usize) -> Vec<String> {
+    let mut counts: HashMap<String, i64> = HashMap::new();
+    for d in domains {
+        let k = d.to_ascii_lowercase();
+        *counts.entry(k).or_insert(0) += 1;
+    }
+    let mut pairs: Vec<(String, i64)> = counts.into_iter().collect();
+    pairs.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    pairs.into_iter().take(take).map(|(s, _)| s).collect()
+}
+
+fn top_unknown_domains_by_query_count(
+    conn: Option<&Connection>,
+    domains: &[String],
+    take: usize,
+) -> Vec<String> {
+    let mut counts: HashMap<String, i64> = HashMap::new();
+    for d in domains {
+        if classify_domain_with_feedback(conn, d).category != DomainCategory::Unknown {
+            continue;
+        }
+        let k = d.to_ascii_lowercase();
+        *counts.entry(k).or_insert(0) += 1;
+    }
+    let mut pairs: Vec<(String, i64)> = counts.into_iter().collect();
+    pairs.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    pairs.into_iter().take(take).map(|(s, _)| s).collect()
 }
 
 impl DomainWindowSummary {
-    fn from_domains(domains: Vec<String>) -> Self {
+    fn from_domains(conn: Option<&Connection>, domains: Vec<String>) -> Self {
+        let top_domains_sample = top_domains_by_query_count(&domains, 10);
+        let top_unknown_domains_sample = top_unknown_domains_by_query_count(conn, &domains, 8);
         let mut summary = Self {
             total_queries: domains.len() as i64,
+            top_domains_sample,
+            top_unknown_domains_sample,
             ..Self::default()
         };
         let mut distinct = BTreeSet::new();
 
         for domain in &domains {
-            let classification = classify_domain(domain);
+            let classification = classify_domain_with_feedback(conn, domain);
             match classification.category {
                 DomainCategory::Common => {
                     summary.common_queries += 1;
@@ -84,13 +121,29 @@ impl DomainWindowSummary {
 
         summary.distinct_domains = distinct.len() as i64;
         for domain in distinct {
-            match classify_domain(&domain).category {
+            match classify_domain_with_feedback(conn, &domain).category {
                 DomainCategory::Common => summary.common_distinct_domains += 1,
                 DomainCategory::Unknown => summary.unknown_distinct_domains += 1,
             }
         }
 
         summary
+    }
+
+    fn candidate_block_domain(&self, profile: TrafficProfile) -> Option<String> {
+        match profile {
+            TrafficProfile::MostlyUnknown => self
+                .top_unknown_domains_sample
+                .first()
+                .cloned()
+                .or_else(|| self.top_domains_sample.first().cloned()),
+            TrafficProfile::Mixed => self
+                .top_unknown_domains_sample
+                .first()
+                .cloned()
+                .or_else(|| self.top_domains_sample.first().cloned()),
+            TrafficProfile::MostlyCommon => None,
+        }
     }
 
     fn query_profile(&self) -> TrafficProfile {
@@ -123,18 +176,63 @@ impl DomainWindowSummary {
             .collect()
     }
 
-    fn details_json(&self, profile: TrafficProfile) -> String {
-        json!({
-            "traffic_profile": profile.as_str(),
-            "total_queries": self.total_queries,
-            "distinct_domains": self.distinct_domains,
-            "common_queries": self.common_queries,
-            "unknown_queries": self.unknown_queries,
-            "common_distinct_domains": self.common_distinct_domains,
-            "unknown_distinct_domains": self.unknown_distinct_domains,
-            "common_families": self.top_common_families(),
-        })
-        .to_string()
+    /// `device_id`: scope of the alert (per-device categories). `related_device_id`: optional client that
+    /// triggered evaluation when the alert row’s `device_id` column is NULL (e.g. global spike).
+    /// `trigger_domain`: query that participated in firing this evaluation (compact hint for UI).
+    fn details_json(
+        &self,
+        profile: TrafficProfile,
+        device_id: Option<&str>,
+        related_device_id: Option<&str>,
+        trigger_domain: Option<&str>,
+        intel_signals: &[String],
+    ) -> String {
+        let mut obj = serde_json::Map::new();
+        obj.insert(
+            "traffic_profile".into(),
+            json!(profile.as_str()),
+        );
+        obj.insert("total_queries".into(), json!(self.total_queries));
+        obj.insert("distinct_domains".into(), json!(self.distinct_domains));
+        obj.insert("common_queries".into(), json!(self.common_queries));
+        obj.insert("unknown_queries".into(), json!(self.unknown_queries));
+        obj.insert(
+            "common_distinct_domains".into(),
+            json!(self.common_distinct_domains),
+        );
+        obj.insert(
+            "unknown_distinct_domains".into(),
+            json!(self.unknown_distinct_domains),
+        );
+        obj.insert(
+            "common_families".into(),
+            json!(self.top_common_families()),
+        );
+        obj.insert("top_domains".into(), json!(&self.top_domains_sample));
+        obj.insert(
+            "top_unknown_domains".into(),
+            json!(&self.top_unknown_domains_sample),
+        );
+        if let Some(d) = trigger_domain {
+            if !d.is_empty() {
+                obj.insert("trigger_domain".into(), json!(d));
+            }
+        }
+        if let Some(c) = self.candidate_block_domain(profile) {
+            if !c.is_empty() {
+                obj.insert("candidate_block_domain".into(), json!(c));
+            }
+        }
+        if let Some(d) = device_id {
+            obj.insert("device_id".into(), json!(d));
+        }
+        if let Some(d) = related_device_id {
+            obj.insert("related_device_id".into(), json!(d));
+        }
+        if !intel_signals.is_empty() {
+            obj.insert("intel_signals".into(), json!(intel_signals));
+        }
+        serde_json::Value::Object(obj).to_string()
     }
 }
 
@@ -161,7 +259,18 @@ pub fn evaluate_after_query(conn: &Connection, row: &queries::DnsQueryRow) -> Ve
                 )
                 .unwrap_or(0);
             if n_block >= REPEAT_BLOCK_THRESHOLD {
-                let details = serde_json::json!({ "domain": row.domain }).to_string();
+                let details = serde_json::json!({
+                    "domain": row.domain,
+                    "device_id": did,
+                    "trigger_domain": row.domain,
+                    "candidate_block_domain": row.domain,
+                    "top_unknown_domains": serde_json::Value::Array(vec![]),
+                    "intel_signals": [
+                        "rule:dns_repeat_block",
+                        format!("blocked_lookups≥{} in {}min window", REPEAT_BLOCK_THRESHOLD, REPEAT_BLOCK_WINDOW_MS / 60_000),
+                    ],
+                })
+                .to_string();
                 if !repeat_block_in_cooldown(conn, did, &details, now_ms) {
                     let label = devices::friendly_display_name(conn, did);
                     let msg = format!(
@@ -197,7 +306,21 @@ pub fn evaluate_after_query(conn: &Connection, row: &queries::DnsQueryRow) -> Ve
         {
             let label = devices::friendly_display_name(conn, did);
             let profile = summary.query_profile();
-            let details = summary.details_json(profile);
+            let sig = vec![
+                format!(
+                    "rule:dns_burst (≥{BURST_THRESHOLD} queries / {}s)",
+                    WINDOW_MS / 1000
+                ),
+                format!("observed_queries={n}"),
+                format!("traffic_profile={}", profile.as_str()),
+            ];
+            let details = summary.details_json(
+                profile,
+                Some(did),
+                None,
+                Some(row.domain.as_str()),
+                &sig,
+            );
             let (severity, msg) = match profile {
                 TrafficProfile::MostlyCommon => (
                     "info",
@@ -243,11 +366,25 @@ pub fn evaluate_after_query(conn: &Connection, row: &queries::DnsQueryRow) -> Ve
                 MANY_DOMAINS_COOLDOWN_MS,
             )
         {
-            let profile = summary.distinct_profile();
-            if profile != TrafficProfile::MostlyCommon {
-                let label = devices::friendly_display_name(conn, did);
-                let details = summary.details_json(profile);
-                let (severity, msg) = match profile {
+                let profile = summary.distinct_profile();
+                if profile != TrafficProfile::MostlyCommon {
+                    let label = devices::friendly_display_name(conn, did);
+                    let sig = vec![
+                        format!(
+                            "rule:dns_many_domains (≥{MANY_DOMAINS_THRESHOLD} distinct / {}s)",
+                            WINDOW_MS / 1000
+                        ),
+                        format!("observed_distinct_domains={distinct}"),
+                        format!("distinct_bucket_profile={}", profile.as_str()),
+                    ];
+                    let details = summary.details_json(
+                        profile,
+                        Some(did),
+                        None,
+                        Some(row.domain.as_str()),
+                        &sig,
+                    );
+                    let (severity, msg) = match profile {
                     TrafficProfile::MostlyUnknown => (
                         "warning",
                         format!(
@@ -292,7 +429,25 @@ pub fn evaluate_after_query(conn: &Connection, row: &queries::DnsQueryRow) -> Ve
         )
     {
         let profile = summary.query_profile();
-        let details = summary.details_json(profile);
+        let related = row
+            .device_id
+            .as_deref()
+            .filter(|d| d.starts_with("ip:"));
+        let sig = vec![
+            format!(
+                "rule:dns_global_spike (≥{GLOBAL_SPIKE_THRESHOLD} queries / {}s)",
+                WINDOW_MS / 1000
+            ),
+            format!("observed_total_queries={total}"),
+            format!("traffic_profile={}", profile.as_str()),
+        ];
+        let details = summary.details_json(
+            profile,
+            None,
+            related,
+            Some(row.domain.as_str()),
+            &sig,
+        );
         let (severity, msg) = match profile {
             TrafficProfile::MostlyCommon => (
                 "info",
@@ -347,7 +502,7 @@ fn load_device_window_summary(
         "SELECT domain FROM dns_queries WHERE device_id = ?1 AND timestamp >= ?2",
         params![device_id, since_ms],
     )?;
-    Ok(DomainWindowSummary::from_domains(domains))
+    Ok(DomainWindowSummary::from_domains(Some(conn), domains))
 }
 
 fn load_global_window_summary(
@@ -359,7 +514,7 @@ fn load_global_window_summary(
         "SELECT domain FROM dns_queries WHERE timestamp >= ?1",
         params![since_ms],
     )?;
-    Ok(DomainWindowSummary::from_domains(domains))
+    Ok(DomainWindowSummary::from_domains(Some(conn), domains))
 }
 
 fn load_domains<P: rusqlite::Params>(

@@ -22,6 +22,16 @@
 - **SQLite** at `storage.db_path` from config. Tables: devices, dns_queries, alerts, rules, settings — see `docs/storage-schema.md`.
 - **Schema:** `storage::migrations::run_migrations` runs after open; **`PRAGMA user_version`** tracks applied steps; WAL and foreign keys are set in migration 1. See `engine/src/storage/migrations.rs`.
 
+## DNS policy precedence (per client)
+
+Order used when answering a query for a given `device_id` (see `engine/src/dns/server.rs` and `engine/src/storage/devices.rs`):
+
+1. **Pause (global):** If `dns_paused` is set, the engine answers SERVFAIL and does not forward (see control plane below).
+2. **Per-device effective DNS policy:** `devices.dns_policy` (`normal` \| `restricted` \| `paused` \| `blocked`), then optional **time-of-day** row from `dns_time_overrides` that matches local wall time and scope (`resolve_effective_dns_policy`). **`GET /devices`** and **`GET /devices/:id`** expose both the stored `dns_policy` and **`effective_dns_policy`** plus **`schedule_override_active`** so the app can show “saved vs now” without re-implementing precedence in Swift.
+3. **Domain rules:** Global allow/block lists and DB rules in the DNS filter (`engine/src/dns/filter.rs`). **Allowlist wins** over block for a given name.
+
+Restricted / paused / blocked device modes constrain or replace forwarding **before** per-query allow/block evaluation where implemented in the server path.
+
 ## DNS
 
 - **UDP** and **TCP** listeners on `dns.listen_addr` (same port; length-prefixed messages on TCP per RFC 1035 §4.2.2).

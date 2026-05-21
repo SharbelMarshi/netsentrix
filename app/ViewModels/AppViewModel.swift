@@ -31,4 +31,20 @@ enum AppDestination: String, CaseIterable, Identifiable, Hashable {
 @MainActor
 final class AppViewModel: ObservableObject {
     @Published var selectedDestination: AppDestination = .dashboard
+
+    /// When set, Queries uses `GET /queries?device_id=…` and filters the live stream to this client key.
+    @Published var queriesDeviceFilterId: String?
+    /// Optional domain string to sort/highlight on the Queries table (from alert context).
+    @Published var queriesHighlightDomain: String?
+
+    func openQueries(deviceFilter: String?, highlightDomain: String?) {
+        queriesDeviceFilterId = deviceFilter
+        queriesHighlightDomain = highlightDomain
+        selectedDestination = .queries
+    }
+
+    func clearQueriesNavigationContext() {
+        queriesDeviceFilterId = nil
+        queriesHighlightDomain = nil
+    }
 }

@@ -20,6 +20,7 @@ use crate::events::bus::EventBus;
 use crate::events::models::DnsQueryEvent;
 use crate::device::{client_key, manager};
 use crate::sniffer::models::DetectionEvent;
+use crate::storage::devices;
 use crate::storage::queries::{self, DnsQueryRow};
 
 #[derive(Debug, Default, Clone)]
@@ -236,12 +237,99 @@ async fn resolve_dns_datagram(
         (cfg.dns.block_policy, addr, cfg.dns.cache.clone())
     };
 
+    let qtype_str = qtype_label(pq.qtype);
+
+    let explicitly_allowed = {
+        let filter = shared.filter.read().await;
+        filter.explicitly_allowlisted(&pq.qname)
+    };
+
+    if explicitly_allowed {
+        return forward_allow_resolve(
+            shared,
+            &pq,
+            req,
+            now_ms,
+            device_id,
+            upstream_sock,
+            upstream_addr,
+            up_buf,
+            &cache_cfg,
+            &qtype_str,
+        )
+        .await;
+    }
+
+    let device_policy = match shared.db.lock() {
+        Ok(c) => devices::resolve_effective_dns_policy(&c, device_id),
+        Err(_) => "normal".to_string(),
+    };
+
+    match device_policy.as_str() {
+        "blocked" => {
+            let resp = responder::build_blocked_response(req, &pq, policy).or_else(|| {
+                responder::build_blocked_response(req, &pq, BlockPolicy::NxDomain)
+            });
+            if let Some(bytes) = resp {
+                return Some((
+                    bytes,
+                    Some(DnsQueryRow {
+                        timestamp_ms: now_ms,
+                        device_id: Some(device_id.to_string()),
+                        domain: pq.qname.clone(),
+                        query_type: qtype_str.clone(),
+                        action: "blocked_device".into(),
+                        upstream_response: Some("device_blocked".into()),
+                        latency_ms: Some(0),
+                    }),
+                ));
+            }
+            return None;
+        }
+        "paused" => {
+            if let Some(sf) = responder::build_servfail(req) {
+                return Some((
+                    sf,
+                    Some(DnsQueryRow {
+                        timestamp_ms: now_ms,
+                        device_id: Some(device_id.to_string()),
+                        domain: pq.qname.clone(),
+                        query_type: qtype_str.clone(),
+                        action: "device_paused_dns".into(),
+                        upstream_response: Some("device_paused".into()),
+                        latency_ms: Some(0),
+                    }),
+                ));
+            }
+            return None;
+        }
+        "restricted" => {
+            let resp = responder::build_blocked_response(req, &pq, policy).or_else(|| {
+                responder::build_blocked_response(req, &pq, BlockPolicy::NxDomain)
+            });
+            if let Some(bytes) = resp {
+                return Some((
+                    bytes,
+                    Some(DnsQueryRow {
+                        timestamp_ms: now_ms,
+                        device_id: Some(device_id.to_string()),
+                        domain: pq.qname.clone(),
+                        query_type: qtype_str.clone(),
+                        action: "blocked_restricted".into(),
+                        upstream_response: Some("restricted_allowlist".into()),
+                        latency_ms: Some(0),
+                    }),
+                ));
+            }
+            return None;
+        }
+        _ => {}
+    }
+
     let decision = {
         let filter = shared.filter.read().await;
         filter.decision(&pq.qname)
     };
-
-    let qtype_str = qtype_label(pq.qtype);
 
     match decision {
         FilterDecision::Block => {

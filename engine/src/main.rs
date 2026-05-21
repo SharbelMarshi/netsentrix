@@ -7,6 +7,8 @@ mod device;
 mod dns;
 mod enrich;
 mod events;
+mod intelligence;
+mod policy;
 mod rules;
 mod sniffer;
 mod storage;

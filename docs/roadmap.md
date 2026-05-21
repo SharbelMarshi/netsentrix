@@ -1,5 +1,11 @@
 # NetSentrix — roadmap
 
+## Phases 2.6–4 (execution)
+
+- **Phase 2.6:** UI stability first (Queries `Table` + WebSocket + poll, selection, navigation from Alerts), then alert UX polish. Do not chase AppKit console noise without a reproducible bug (`docs/QUERIES_UI_DEBUG.md`).
+- **Phase 3:** Per-device **control surface** in-app: list + detail show **saved vs effective** DNS mode (`dns_policy`, `effective_dns_policy`, `schedule_override_active` on `GET /devices` / `GET /devices/:id`), row/context actions and confirmations for disruptive modes, `PATCH /devices/:id` for renames/tags/mode. Precedence: `docs/architecture.md`.
+- **Phase 4:** **Audit** (`docs/SETTINGS_PARITY_AUDIT.md`) → **UI** (parity, runtime transparency from `GET /health`) → **docs sync**.
+
 ## Done (MVP foundation — current tree)
 
 - Monorepo: `engine/` (Rust), `app/` (SwiftPM), `docs/`, `packaging/macos/`.
@@ -14,14 +20,24 @@
 
 ## In progress / next (smaller iterations)
 
-1. **Settings UI parity:** blocklist/allowlist paths, optional pause controls, listen_addr display-only warnings.
-2. **DNS edge cases:** multi-question packets; TCP/UDP truncation interop under load (validate in the field).
-3. **Packaging:** Harden preflight automation; signed/notarized artifact when ready (no SMJobBless in near term).
+1. **DNS edge cases:** multi-question packets; TCP/UDP truncation interop under load (validate in the field).
+2. **Packaging:** Signed/notarized artifact when ready (no SMJobBless in near term); preflight gains more checks over time.
+
+## Recently landed (core roadmap slices)
+
+- **Settings / operator:** App edits **blocklist** and **allowlist** paths via `POST /settings`; read-only **loopback DNS listen** warning; Queries table prunes stale selection on refresh; **CSV export** of recent queries (`GET /queries/export.csv` + Settings button).
+- **Health automation:** `GET /health` includes **`setup_hints`** (actionable copy + optional `suggested_fix`) from protection signals, IPv6-on-host hint, and DNS-visible DoH-style hostname heuristics — **honest scope**, not bypass proof.
+- **Alerts / intelligence:** `GET /alerts` **`priority`** tiers; alert **`details_json`** may include **`intel_signals`** (rule-trace strings); classifier honors **`domain_feedback`** (`POST /feedback/domain`); right-click hints in the app.
+- **Insights (FG2):** `GET /insights/daily` + Dashboard **Charts** card (top domains / devices, peak hour).
+- **Phase 9 v1:** SQLite **`dns_time_overrides`** + **`devices.tags`**; **`resolve_effective_dns_policy`** applies local time windows; CRUD **`/policy/time-overrides`**; device tags on **`PATCH /devices/:id`**.
+- **Enrichment (Phase 8 slice):** Deterministic **`explain_domain`** surfaced on insights rows (`engine/src/enrich/mod.rs` re-export).
+- **Sniffer gate:** Cargo feature **`sniffer_capture`** reserved; `sniffer_enabled` stays **false** until a real capture loop exists — see `docs/sniffer-permissions.md`.
+- **Packaging:** `packaging/macos/MAC_MINI_APPLIANCE.md` operator checklist.
 
 ## Phase 3+ (deferred)
 
-- **Live packet capture** (libpcap or equivalent) — previously sketched; **removed from Cargo** until a deliberate reimplementation. Event DTOs remain for future use.
-- GeoIP/enrich, behavioral rules + alert generation from a real detection pipeline.
+- **Live packet capture** (libpcap or equivalent) — optional **`sniffer_capture`** feature flag only; no live loop yet. Event DTOs + `EventBus` channels remain for Phase 6+.
+- Deeper GeoIP/ASN/rDNS usage from `enrich/` modules; behavioral rules + richer alert correlation.
 - Signed installer / SMJobBless for production port 53.
 
 ## Explicitly not planned (near term)

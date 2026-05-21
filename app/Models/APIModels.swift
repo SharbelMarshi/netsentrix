@@ -105,6 +105,14 @@ struct DeviceDTO: Decodable, Identifiable, Sendable {
     let queryCount24h: Int64
     /// True when `last_seen` is within that 24h window.
     let recentlySeenDns: Bool
+    /// Stored per-device mode in SQLite (`normal`, `restricted`, `paused`, `blocked`).
+    let dnsPolicy: String
+    /// Mode the resolver uses now (stored policy plus an active local time override when one matches).
+    let effectiveDnsPolicy: String
+    /// True when a `dns_time_overrides` row applies to this device at engine local wall time.
+    let scheduleOverrideActive: Bool
+    /// Comma-separated operator tags (FG4).
+    let tags: String
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -120,6 +128,10 @@ struct DeviceDTO: Decodable, Identifiable, Sendable {
         case queryCountTotal = "query_count_total"
         case queryCount24h = "query_count_24h"
         case recentlySeenDns = "recently_seen_dns"
+        case dnsPolicy = "dns_policy"
+        case effectiveDnsPolicy = "effective_dns_policy"
+        case scheduleOverrideActive = "schedule_override_active"
+        case tags
     }
 
     init(from decoder: Decoder) throws {
@@ -137,6 +149,59 @@ struct DeviceDTO: Decodable, Identifiable, Sendable {
         queryCountTotal = try c.decodeIfPresent(Int64.self, forKey: .queryCountTotal) ?? 0
         queryCount24h = try c.decodeIfPresent(Int64.self, forKey: .queryCount24h) ?? 0
         recentlySeenDns = try c.decodeIfPresent(Bool.self, forKey: .recentlySeenDns) ?? false
+        dnsPolicy = try c.decodeIfPresent(String.self, forKey: .dnsPolicy) ?? "normal"
+        effectiveDnsPolicy = try c.decodeIfPresent(String.self, forKey: .effectiveDnsPolicy) ?? dnsPolicy
+        scheduleOverrideActive = try c.decodeIfPresent(Bool.self, forKey: .scheduleOverrideActive) ?? false
+        tags = try c.decodeIfPresent(String.self, forKey: .tags) ?? ""
+    }
+
+    /// True when saved SQLite policy differs from what the resolver uses right now (usually a time override).
+    var effectiveDiffersFromStored: Bool {
+        dnsPolicy.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            != effectiveDnsPolicy.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+}
+
+struct InsightsDailyDTO: Decodable, Sendable {
+    let windowHours: UInt32
+    let sinceMs: Int64
+    let untilMs: Int64
+    let topDevices: [DeviceQueryInsightRow]
+    let topDomains: [DomainInsightRowDTO]
+    let peakHourLocal: Int?
+    let peakHourQueryCount: Int64
+
+    enum CodingKeys: String, CodingKey {
+        case windowHours = "window_hours"
+        case sinceMs = "since_ms"
+        case untilMs = "until_ms"
+        case topDevices = "top_devices"
+        case topDomains = "top_domains"
+        case peakHourLocal = "peak_hour_local"
+        case peakHourQueryCount = "peak_hour_query_count"
+    }
+}
+
+struct DeviceQueryInsightRow: Decodable, Sendable {
+    let deviceId: String
+    let queryCount: Int64
+
+    enum CodingKeys: String, CodingKey {
+        case deviceId = "device_id"
+        case queryCount = "query_count"
+    }
+}
+
+struct DomainInsightRowDTO: Decodable, Sendable, Identifiable {
+    var id: String { domain }
+    let domain: String
+    let queryCount: Int64
+    let explanation: String
+
+    enum CodingKeys: String, CodingKey {
+        case domain
+        case queryCount = "query_count"
+        case explanation
     }
 }
 
@@ -148,6 +213,8 @@ struct AlertDTO: Decodable, Identifiable, Sendable {
     let category: String
     let message: String
     let detailsJson: String?
+    /// `low` | `medium` | `high` from engine rules; absent on older engines.
+    let priority: String?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -157,6 +224,19 @@ struct AlertDTO: Decodable, Identifiable, Sendable {
         case category
         case message
         case detailsJson = "details_json"
+        case priority
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(Int64.self, forKey: .id)
+        timestampMs = try c.decode(Int64.self, forKey: .timestampMs)
+        deviceId = try c.decodeIfPresent(String.self, forKey: .deviceId)
+        severity = try c.decode(String.self, forKey: .severity)
+        category = try c.decode(String.self, forKey: .category)
+        message = try c.decode(String.self, forKey: .message)
+        detailsJson = try c.decodeIfPresent(String.self, forKey: .detailsJson)
+        priority = try c.decodeIfPresent(String.self, forKey: .priority)
     }
 }
 
@@ -176,12 +256,26 @@ struct DnsSettingsDTO: Decodable, Sendable {
     let upstream: String
     let blockPolicy: String
     let protectionActivityWindowSecs: UInt64
+    let blocklistPaths: [String]
+    let allowlistPaths: [String]
 
     enum CodingKeys: String, CodingKey {
         case listenAddr = "listen_addr"
         case upstream
         case blockPolicy = "block_policy"
         case protectionActivityWindowSecs = "protection_activity_window_secs"
+        case blocklistPaths = "blocklist_paths"
+        case allowlistPaths = "allowlist_paths"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        listenAddr = try c.decode(String.self, forKey: .listenAddr)
+        upstream = try c.decode(String.self, forKey: .upstream)
+        blockPolicy = try c.decode(String.self, forKey: .blockPolicy)
+        protectionActivityWindowSecs = try c.decodeIfPresent(UInt64.self, forKey: .protectionActivityWindowSecs) ?? 300
+        blocklistPaths = try c.decodeIfPresent([String].self, forKey: .blocklistPaths) ?? []
+        allowlistPaths = try c.decodeIfPresent([String].self, forKey: .allowlistPaths) ?? []
     }
 }
 
@@ -190,11 +284,15 @@ struct SettingsDnsPatch: Encodable {
     var upstream: String?
     var blockPolicy: String?
     var protectionActivityWindowSecs: UInt64?
+    var blocklistPaths: [String]?
+    var allowlistPaths: [String]?
 
     enum CodingKeys: String, CodingKey {
         case upstream
         case blockPolicy = "block_policy"
         case protectionActivityWindowSecs = "protection_activity_window_secs"
+        case blocklistPaths = "blocklist_paths"
+        case allowlistPaths = "allowlist_paths"
     }
 
     func encode(to encoder: Encoder) throws {
@@ -202,6 +300,8 @@ struct SettingsDnsPatch: Encodable {
         try c.encodeIfPresent(upstream, forKey: .upstream)
         try c.encodeIfPresent(blockPolicy, forKey: .blockPolicy)
         try c.encodeIfPresent(protectionActivityWindowSecs, forKey: .protectionActivityWindowSecs)
+        try c.encodeIfPresent(blocklistPaths, forKey: .blocklistPaths)
+        try c.encodeIfPresent(allowlistPaths, forKey: .allowlistPaths)
     }
 }
 

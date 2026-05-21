@@ -1,5 +1,7 @@
 //! Small, explicit DNS domain classification for alert noise reduction.
 
+use rusqlite::Connection;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DomainCategory {
     Common,
@@ -51,6 +53,45 @@ const DOMAIN_FAMILIES: &[DomainFamilyRule] = &[
         suffixes: &["netflix.com", "nflxvideo.net", "nflximg.net", "nflxso.net"],
     },
 ];
+
+/// Short UI / API explanation string (deterministic, no ML).
+pub fn explain_domain(domain: &str) -> String {
+    let c = classify_domain(domain);
+    match c.category {
+        DomainCategory::Common => c
+            .family
+            .map(|f| format!("Known service bucket: {f}"))
+            .unwrap_or_else(|| "Known service pattern".to_string()),
+        DomainCategory::Unknown => "Unknown (no bundled family match)".to_string(),
+    }
+}
+
+/// Applies local `domain_feedback` overrides when `conn` is provided.
+pub fn classify_domain_with_feedback(
+    conn: Option<&Connection>,
+    domain: &str,
+) -> DomainClassification {
+    if let Some(c) = conn {
+        if let Some(v) = crate::storage::feedback::get_verdict(c, domain) {
+            match v.as_str() {
+                "safe" => {
+                    return DomainClassification {
+                        category: DomainCategory::Common,
+                        family: None,
+                    };
+                }
+                "suspicious" => {
+                    return DomainClassification {
+                        category: DomainCategory::Unknown,
+                        family: None,
+                    };
+                }
+                _ => {}
+            }
+        }
+    }
+    classify_domain(domain)
+}
 
 pub fn classify_domain(domain: &str) -> DomainClassification {
     let normalized = normalize_domain(domain);

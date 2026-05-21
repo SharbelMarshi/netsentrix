@@ -37,6 +37,31 @@ fn prefer_ip(a: Ipv4Addr, b: Ipv4Addr) -> Ipv4Addr {
     b
 }
 
+/// True when a non-loopback interface has IPv6 that is not link-local only (global or unique-local).
+/// Used for **honest** “IPv6 DNS may bypass” hints — not a measurement of actual DNS paths.
+pub fn host_has_global_or_unique_local_ipv6() -> bool {
+    let Ok(ifs) = if_addrs::get_if_addrs() else {
+        return false;
+    };
+    for iface in ifs {
+        if iface.is_loopback() {
+            continue;
+        }
+        let IfAddr::V6(v6) = iface.addr else {
+            continue;
+        };
+        let ip = v6.ip;
+        if ip.is_loopback() || ip.is_unicast_link_local() {
+            continue;
+        }
+        if ip.is_multicast() {
+            continue;
+        }
+        return true;
+    }
+    false
+}
+
 #[allow(dead_code)]
 pub fn is_ipv4_global(ip: IpAddr) -> bool {
     match ip {

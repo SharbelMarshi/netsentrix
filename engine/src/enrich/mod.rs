@@ -1,4 +1,4 @@
-//! Phase 3+ — GeoIP / ASN enrichment. **Not implemented** — stubs only; do not treat as available.
+//! Offline enrichment (Phase 8). GeoIP/ASN `.mmdb` paths can be added to config later; today the app
+//! consumes **deterministic domain explanations** from the classifier via API (`/insights/daily`).
 
-#[allow(dead_code)]
-pub struct EnrichStub;
+pub use crate::alerts::classification::explain_domain;

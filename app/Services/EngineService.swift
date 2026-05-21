@@ -1,4 +1,6 @@
+import AppKit
 import Foundation
+import UniformTypeIdentifiers
 
 @MainActor
 final class EngineService: ObservableObject {
@@ -10,6 +12,8 @@ final class EngineService: ObservableObject {
     @Published private(set) var devices: [DeviceDTO] = []
     @Published private(set) var alerts: [AlertDTO] = []
     @Published private(set) var settings: SettingsPayload?
+    @Published private(set) var lastInsights: InsightsDailyDTO?
+    @Published private(set) var insightsFetchError: String?
 
     /// Set when `GET /health` fails after an attempt (engine unreachable).
     @Published private(set) var healthFetchError: String?
@@ -17,14 +21,22 @@ final class EngineService: ObservableObject {
     @Published private(set) var statsFetchError: String?
     /// Set when `GET /queries` fails.
     @Published private(set) var queriesFetchError: String?
+    /// Set when `GET /alerts` fails (kept separate from `lastOperationError` for mutations).
+    @Published private(set) var alertsFetchError: String?
+
+    /// Bumps when REST `queries` or live WebSocket rows change — drives stable Queries table updates.
+    @Published private(set) var queriesDisplayRevision: UInt = 0
 
     @Published private(set) var isRefreshingHealth = false
     @Published private(set) var isRefreshingStats = false
     @Published private(set) var isRefreshingQueries = false
     @Published private(set) var isRefreshingDashboard = false
+    @Published private(set) var isRefreshingInsights = false
 
     /// Live DNS rows from WebSocket (prepended to REST `queries` in the Queries screen).
     @Published private(set) var liveWsQueries: [DnsQueryItem] = []
+    /// Mirrors the last `device_id` used for `GET /queries` so block/allow refreshes keep the same scope.
+    private var lastQueriesDeviceId: String?
     /// Twelve five-second buckets over the last minute (for Dashboard sparkline).
     @Published private(set) var trafficSparklineBuckets: [Int] = Array(repeating: 0, count: 12)
 
@@ -48,6 +60,12 @@ final class EngineService: ObservableObject {
 
     /// Shown after a successful POST `/block` or `/allow` (Queries + Settings).
     @Published private(set) var lastDomainRuleSuccess: String?
+
+    /// Shown after a successful device rename, DNS policy change, or tags save.
+    @Published private(set) var lastDeviceControlSuccess: String?
+
+    /// True while PATCH `/devices/:id` is in flight (rename, policy, or tags).
+    @Published private(set) var isApplyingDeviceChange = false
 
     /// True while POST `/settings`, `/reload`, or DNS pause/resume is in flight.
     @Published private(set) var isSavingSettings = false
@@ -109,25 +127,32 @@ final class EngineService: ObservableObject {
         dnsCacheHitRateHistory = next
     }
 
-    func refreshQueries(limit: Int = 100) async {
+    func refreshQueries(limit: Int = 100, deviceId: String? = nil) async {
+        lastQueriesDeviceId = deviceId
         isRefreshingQueries = true
         defer {
             isRefreshingQueries = false
             hasCompletedInitialQueriesFetch = true
         }
         do {
-            queries = try await client.queries(limit: limit)
+            queries = try await client.queries(limit: limit, deviceId: deviceId)
             queriesFetchError = nil
+            bumpQueriesDisplayRevision()
         } catch {
             queriesFetchError = error.localizedDescription
         }
     }
 
-    /// Queries for UI: WebSocket-first (deduped by id), then REST sample.
-    func mergedDisplayQueries() -> [DnsQueryItem] {
+    private func bumpQueriesDisplayRevision() {
+        queriesDisplayRevision &+= 1
+    }
+
+    /// Queries for UI: WebSocket-first (deduped by id), then REST sample. Optionally restrict to one `device_id`.
+    func mergedDisplayQueries(deviceFilter: String? = nil) -> [DnsQueryItem] {
         var seen = Set<Int64>()
         var out: [DnsQueryItem] = []
         for q in liveWsQueries + queries {
+            if let f = deviceFilter, !f.isEmpty, q.deviceId != f { continue }
             if seen.insert(q.id).inserted {
                 out.append(q)
             }
@@ -196,6 +221,7 @@ final class EngineService: ObservableObject {
                     if self.liveWsQueries.count > 150 {
                         self.liveWsQueries.removeLast()
                     }
+                    self.bumpQueriesDisplayRevision()
                     self.recordSparklineEvent()
                 }
             } catch {
@@ -241,12 +267,12 @@ final class EngineService: ObservableObject {
     }
 
     func refreshAlerts() async {
-        lastOperationError = nil
         defer { hasCompletedInitialAlertsFetch = true }
         do {
             alerts = try await client.alerts()
+            alertsFetchError = nil
         } catch {
-            lastOperationError = error.localizedDescription
+            alertsFetchError = error.localizedDescription
         }
     }
 
@@ -266,19 +292,91 @@ final class EngineService: ObservableObject {
         await refreshHealth()
         await refreshStats()
         await refreshQueries(limit: 5)
+        await refreshInsights()
+    }
+
+    func refreshInsights() async {
+        isRefreshingInsights = true
+        defer { isRefreshingInsights = false }
+        do {
+            lastInsights = try await client.insightsDaily(hours: 24)
+            insightsFetchError = nil
+        } catch {
+            lastInsights = nil
+            insightsFetchError = error.localizedDescription
+        }
+    }
+
+    /// Saves `queries/export.csv` via a save panel (G14).
+    func exportQueriesCSVUsingSavePanel() {
+        lastOperationError = nil
+        Task {
+            do {
+                let data = try await client.exportQueriesCSV(hours: 24, limit: 10_000)
+                await MainActor.run {
+                    let p = NSSavePanel()
+                    p.allowedContentTypes = [.commaSeparatedText]
+                    p.nameFieldStringValue = "netsentrix_queries_export.csv"
+                    guard p.runModal() == .OK, let url = p.url else { return }
+                    do {
+                        try data.write(to: url, options: .atomic)
+                        self.lastDomainRuleSuccess = "Exported queries to \(url.lastPathComponent)"
+                    } catch {
+                        self.lastOperationError = error.localizedDescription
+                    }
+                }
+            } catch {
+                await MainActor.run { self.lastOperationError = error.localizedDescription }
+            }
+        }
     }
 
     func saveUpstream(_ upstream: String) async {
-        await saveSettingsPatch(SettingsDnsPatch(upstream: upstream, blockPolicy: nil, protectionActivityWindowSecs: nil))
+        await saveSettingsPatch(
+            SettingsDnsPatch(
+                upstream: upstream,
+                blockPolicy: nil,
+                protectionActivityWindowSecs: nil,
+                blocklistPaths: nil,
+                allowlistPaths: nil
+            )
+        )
     }
 
     func saveBlockPolicy(_ apiValue: String) async {
-        await saveSettingsPatch(SettingsDnsPatch(upstream: nil, blockPolicy: apiValue, protectionActivityWindowSecs: nil))
+        await saveSettingsPatch(
+            SettingsDnsPatch(
+                upstream: nil,
+                blockPolicy: apiValue,
+                protectionActivityWindowSecs: nil,
+                blocklistPaths: nil,
+                allowlistPaths: nil
+            )
+        )
     }
 
     func saveProtectionActivityWindow(seconds: UInt64) async {
         await saveSettingsPatch(
-            SettingsDnsPatch(upstream: nil, blockPolicy: nil, protectionActivityWindowSecs: seconds)
+            SettingsDnsPatch(
+                upstream: nil,
+                blockPolicy: nil,
+                protectionActivityWindowSecs: seconds,
+                blocklistPaths: nil,
+                allowlistPaths: nil
+            )
+        )
+    }
+
+    /// Saves static block/allow list file paths (engine merges into the live filter).
+    func saveBlocklistAllowlistPaths(blocklist: [String], allowlist: [String]) async {
+        await saveSettingsPatch(
+            SettingsDnsPatch(
+                upstream: nil,
+                blockPolicy: nil,
+                protectionActivityWindowSecs: nil,
+                blocklistPaths: blocklist,
+                allowlistPaths: allowlist
+            )
         )
     }
 
@@ -335,12 +433,58 @@ final class EngineService: ObservableObject {
 
     func renameDevice(id: String, name: String) async {
         lastOperationError = nil
+        lastDeviceControlSuccess = nil
+        isApplyingDeviceChange = true
+        defer { isApplyingDeviceChange = false }
         do {
-            try await client.patchDeviceName(id: id, name: name)
+            try await client.patchDevice(id: id, name: name, dnsPolicy: nil, tags: nil)
+            lastDeviceControlSuccess = "Device renamed."
             await refreshDevices()
         } catch {
             lastOperationError = error.localizedDescription
         }
+    }
+
+    /// `dnsPolicy`: `normal`, `restricted`, `paused`, or `blocked` (engine canonical values).
+    func setDeviceDnsPolicy(id: String, dnsPolicy: String) async {
+        lastOperationError = nil
+        lastDeviceControlSuccess = nil
+        isApplyingDeviceChange = true
+        defer { isApplyingDeviceChange = false }
+        do {
+            try await client.patchDevice(id: id, name: nil, dnsPolicy: dnsPolicy, tags: nil)
+            lastDeviceControlSuccess = "Device DNS mode updated."
+            await refreshDevices()
+        } catch {
+            lastOperationError = error.localizedDescription
+        }
+    }
+
+    func setDeviceTags(id: String, tags: String) async {
+        lastOperationError = nil
+        lastDeviceControlSuccess = nil
+        isApplyingDeviceChange = true
+        defer { isApplyingDeviceChange = false }
+        do {
+            try await client.patchDevice(id: id, name: nil, dnsPolicy: nil, tags: tags)
+            lastDeviceControlSuccess = "Tags saved."
+            await refreshDevices()
+        } catch {
+            lastOperationError = error.localizedDescription
+        }
+    }
+
+    func markDomainFeedback(pattern: String, verdict: String) async {
+        lastOperationError = nil
+        do {
+            try await client.postDomainFeedback(pattern: pattern, verdict: verdict)
+        } catch {
+            lastOperationError = error.localizedDescription
+        }
+    }
+
+    func clearDeviceControlSuccess() {
+        lastDeviceControlSuccess = nil
     }
 
     func clearDomainRuleSuccess() {
@@ -375,8 +519,10 @@ final class EngineService: ObservableObject {
                 try await client.postBlockDomain(pattern: p)
                 lastDomainRuleSuccess = "Blocked «\(p)» — new lookups will be filtered using this rule."
             }
-            await refreshQueries(limit: 100)
+            lastOperationError = nil
+            await refreshQueries(limit: 100, deviceId: lastQueriesDeviceId)
         } catch {
+            lastDomainRuleSuccess = nil
             lastOperationError = error.localizedDescription
         }
     }

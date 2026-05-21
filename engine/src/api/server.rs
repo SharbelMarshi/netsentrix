@@ -3,7 +3,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use axum::middleware::from_fn_with_state;
-use axum::routing::{get, patch, post};
+use axum::routing::{delete, get, patch, post};
 use axum::Router;
 
 use crate::api::routes;
@@ -41,6 +41,7 @@ pub async fn serve(addr: SocketAddr, state: Arc<AppState>) -> anyhow::Result<()>
         .route("/devices", get(routes::list_devices))
         .route("/devices/:id", get(routes::get_device))
         .route("/alerts", get(routes::list_alerts))
+        .route("/insights/daily", get(routes::insights_daily))
         .route("/ws", get(websocket::dns_events_ws))
         .with_state(st.clone());
 
@@ -55,6 +56,16 @@ pub async fn serve(addr: SocketAddr, state: Arc<AppState>) -> anyhow::Result<()>
         .route("/engine/restart", post(routes::post_engine_noop))
         .route("/engine/stop", post(routes::post_engine_noop))
         .route("/devices/:id", patch(routes::patch_device))
+        .route(
+            "/policy/time-overrides",
+            get(routes::list_time_overrides).post(routes::post_time_override),
+        )
+        .route(
+            "/policy/time-overrides/:id",
+            delete(routes::delete_time_override),
+        )
+        .route("/feedback/domain", post(routes::post_domain_feedback))
+        .route("/queries/export.csv", get(routes::export_queries_csv))
         .layer(from_fn_with_state(
             st.clone(),
             crate::api::auth::require_bearer_middleware,

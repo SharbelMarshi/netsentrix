@@ -86,10 +86,26 @@ impl DnsFilter {
         Ok(())
     }
 
+    /// True if this name matches an **allow** rule (exact or `*.suffix` pattern in the allow set).
+    pub fn explicitly_allowlisted(&self, domain: &str) -> bool {
+        let d = normalize_domain(domain);
+        if self.allow.contains(&d) {
+            return true;
+        }
+        for a in &self.allow {
+            if let Some(suffix) = a.strip_prefix("*.") {
+                if d == suffix || d.ends_with(&format!(".{suffix}")) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     /// Evaluate: allowlist wins; then suffix / exact block match.
     pub fn decision(&self, domain: &str) -> FilterDecision {
         let d = normalize_domain(domain);
-        if self.allow.contains(&d) {
+        if self.explicitly_allowlisted(domain) {
             return FilterDecision::Allow;
         }
         if self.block.contains(&d) {

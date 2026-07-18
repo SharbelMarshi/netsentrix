@@ -33,6 +33,36 @@ struct QueriesView: View {
         selectedQueryIds = selectedQueryIds.intersection(valid)
     }
 
+    /// Live WebSocket state: green "Live", amber "Reconnecting…", gray otherwise.
+    private var liveFeedBadge: some View {
+        HStack(spacing: 5) {
+            Circle()
+                .fill(liveFeedColor)
+                .frame(width: 8, height: 8)
+            Text(liveFeedLabel)
+                .font(.caption)
+                .foregroundStyle(Theme.textSecondary)
+        }
+        .help("Connection state of the live query stream (GET /ws)")
+    }
+
+    private var liveFeedColor: Color {
+        switch engine.liveFeedStatus {
+        case .live: return Theme.allowed
+        case .connecting, .reconnecting: return Theme.warning
+        case .idle: return Theme.infoMuted
+        }
+    }
+
+    private var liveFeedLabel: String {
+        switch engine.liveFeedStatus {
+        case .live: return "Live"
+        case .connecting: return "Connecting…"
+        case .reconnecting: return "Reconnecting…"
+        case .idle: return "Live stream off"
+        }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Queries")

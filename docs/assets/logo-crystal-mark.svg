@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Crystal mark logo">
+  <defs>
+    <linearGradient id="mark-glow" x1="50%" y1="0%" x2="50%" y2="100%">
+      <stop offset="0%" stop-color="#e5e5e5"/>
+      <stop offset="100%" stop-color="#262626"/>
+    </linearGradient>
+  </defs>
+  <!-- Back shard -->
+  <polygon points="64,18 98,48 78,98 50,98 30,48" fill="#525252"/>
+
+  <!-- Left shard -->
+  <polygon points="30,48 50,98 64,78 64,38" fill="#404040"/>
+
+  <!-- Right shard -->
+  <polygon points="98,48 64,38 64,78 78,98" fill="#737373"/>
+
+  <!-- Front center shard -->
+  <polygon points="64,38 82,58 64,78 46,58" fill="#a3a3a3"/>
+
+  <!-- Top cap -->
+  <polygon points="64,18 82,38 64,48 46,38" fill="#d4d4d4"/>
+
+  <!-- Inner depth -->
+  <polygon points="64,48 72,58 64,68 56,58" fill="#636363"/>
+
+  <!-- Bottom point -->
+  <polygon points="50,98 64,78 78,98 64,108" fill="#262626"/>
+</svg>

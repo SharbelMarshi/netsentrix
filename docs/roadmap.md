@@ -2,9 +2,9 @@
 
 ## Phases 2.6–4 (execution)
 
-- **Phase 2.6:** UI stability first (Queries `Table` + WebSocket + poll, selection, navigation from Alerts), then alert UX polish. Do not chase AppKit console noise without a reproducible bug (`docs/QUERIES_UI_DEBUG.md`).
+- **Phase 2.6:** UI stability first (Queries `Table` + WebSocket + poll, selection, navigation from Alerts), then alert UX polish. Do not chase AppKit console noise without a reproducible bug (`docs/notes/queries-ui-debug.md`).
 - **Phase 3:** Per-device **control surface** in-app: list + detail show **saved vs effective** DNS mode (`dns_policy`, `effective_dns_policy`, `schedule_override_active` on `GET /devices` / `GET /devices/:id`), row/context actions and confirmations for disruptive modes, `PATCH /devices/:id` for renames/tags/mode. Precedence: `docs/architecture.md`.
-- **Phase 4:** **Audit** (`docs/SETTINGS_PARITY_AUDIT.md`) → **UI** (parity, runtime transparency from `GET /health`) → **docs sync**.
+- **Phase 4:** **Audit** (`docs/notes/settings-parity-audit.md`) → **UI** (parity, runtime transparency from `GET /health`) → **docs sync**.
 
 ## Done (MVP foundation — current tree)
 

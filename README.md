@@ -1,53 +1,40 @@
 # NetSentrix
 
-Local-first network intelligence: **NetSentrix Core** (Rust engine) provides DNS filtering and a localhost control API; the **NetSentrix** macOS app is the product UI.
+Local-first network intelligence for macOS. A Rust engine (NetSentrix Core) handles DNS filtering, query logging, and a localhost-only control API; a SwiftUI app is the product UI.
 
 ## Layout
 
-| Path | Role |
-|------|------|
-| `engine/` | Daemon: DNS, storage, local API (`127.0.0.1` only). |
-| `app/` | SwiftUI macOS client (Swift Package; open in Xcode via `Package.swift`). |
-| `docs/` | Architecture, API contract, storage schema, roadmap. |
-| `packaging/macos/` | launchd / installer / scripts (scaffold). |
+- `engine/` — Rust daemon: DNS server, SQLite storage, HTTP API on 127.0.0.1
+- `app/` — SwiftUI macOS client (Swift package; open `Package.swift` in Xcode)
+- `docs/` — architecture, API contract, storage schema, roadmap
+- `packaging/macos/` — launchd plist, preflight script, Mac mini install notes
 
-## Development
-
-**Engine** (from repo root):
+## Running the engine
 
 ```bash
 cd engine && cargo run
 ```
 
-**Runtime paths** (single MVP model — details in `engine/src/system/paths.rs`):
+Config is read from `NETSENTRIX_CONFIG`, falling back to `<config_dir>/NetSentrix/config.toml`. The API token and database live under the data dir: `NETSENTRIX_TOKEN_FILE` wins if set, then `NETSENTRIX_DATA_DIR/NetSentrix/api.token`, then `<data_dir>/NetSentrix/api.token`. Path resolution lives in `engine/src/system/paths.rs`.
 
-| Item | Resolution |
-|------|------------|
-| Config | `NETSENTRIX_CONFIG` or `<config_dir>/NetSentrix/config.toml` |
-| Token + default DB layout | `NETSENTRIX_TOKEN_FILE` if set, else `NETSENTRIX_DATA_DIR/NetSentrix/api.token` if `NETSENTRIX_DATA_DIR` set, else `<data_dir>/NetSentrix/api.token` |
+The API listens on port 8756 by default. The config template points DNS at a non-53 port for development; set `dns.listen_addr` to `:53` (needs privileges) to serve the LAN.
 
-**LaunchDaemon as root:** Without **`NETSENTRIX_DATA_DIR`**, token/DB default to **`/var/root/Library/Application Support/NetSentrix/`** while the GUI app reads **`~/Library/Application Support/NetSentrix/api.token`** — use the plist’s **`NETSENTRIX_DATA_DIR`** (see `packaging/macos/launchd/`) so both processes agree.
+One gotcha when running as a root LaunchDaemon: without `NETSENTRIX_DATA_DIR`, the engine writes its token and DB under `/var/root/Library/Application Support/NetSentrix/`, while the GUI app reads `~/Library/Application Support/NetSentrix/api.token`. Set `NETSENTRIX_DATA_DIR` in the plist (see `packaging/macos/launchd/`) so both processes agree.
 
-**App**:
+## Running the app
 
 ```bash
-cd app && swift build && swift run NetSentrix
+cd app && swift run NetSentrix
 ```
 
-Or open `app/Package.swift` in Xcode and run the `NetSentrix` executable target.
+Or open `app/Package.swift` in Xcode and run the `NetSentrix` target. `#Preview` macros are left out of the sources because plain `swift build` can't compile them; add previews back in Xcode-only targets if you want them.
 
-**Note:** `swift build` does not support `#Preview` macros; previews are omitted so CLI builds succeed. Re-add `#Preview` in Xcode-only targets if desired.
+A `Makefile` at the repo root has shortcuts (`make engine`, `make app`, `make test-engine`). CI runs clippy, `cargo test`, and `swift build` on every push.
 
-**Shortcuts:** `Makefile` at repo root (`make engine`, `make app`, `make test-engine`, `make test-app`). **CI** runs `cargo clippy`, `cargo test`, and `swift build` (see `.github/workflows/ci.yml`).
+## What works today
 
-**Misc:** A stray `package-lock.json` at the repo root is not part of the Rust/Swift workflow; remove or ignore unless you add a Node-based tool.
+The engine serves DNS over UDP and TCP with a response cache, blocklist/allowlist and DB-backed rules, and query logging in SQLite (WAL mode, `user_version` migrations). The API covers health (including engine-derived protection status), settings, block/allow, DNS pause/resume, and a WebSocket at `/ws` fed by the internal event bus. The app has Dashboard, Setup, Devices, Queries (REST polling plus live WebSocket), Alerts, and Settings screens, and authenticates with the Bearer token from the path above.
 
-## Status
+Not shipped yet: packet capture (`engine/src/sniffer/` only holds event types for future work), and the enrich and behavioral-rules trees are stubs.
 
-**Engine:** localhost Axum API (health + envelope routes), SQLite (WAL + **`user_version` migrations** in `engine/src/storage/migrations.rs`), **UDP and TCP DNS** on `dns.listen_addr`, response **cache**, list + DB rules, query logging, **engine-derived `protection` on `/health`**, `dns_paused` + `/pause` and `/dns/pause`/`/dns/resume`, event bus + **WebSocket `/ws`**. **Packet capture (sniffer)** is **not shipped** — no Cargo feature; `engine/src/sniffer/` holds event DTOs for future work only. **Enrich** and **behavioral rules** trees are **stubs**. **App:** SwiftUI shell with Dashboard, Setup, Devices (rename uses Bearer), Queries (REST + live WS), Alerts, Settings. API token: `~/Library/Application Support/NetSentrix/api.token` (same dir family as `dirs::data_dir()`). **Dev vs prod:** API defaults to port **8756**; DNS often uses a **non-53** port in the template — set `dns.listen_addr` to `:53` for LAN service (requires privileges). See `docs/roadmap.md`, `docs/architecture.md`, `docs/api.md`.
-
-**Packaging:** `packaging/macos/launchd/` plist (`NETSENTRIX_CONFIG` + **`NETSENTRIX_DATA_DIR`** template), `scripts/preflight.sh` (paths, UDP/TCP :53, API port, launchd, optional `curl /health`), `installer/BUILD.md` (Mac mini install sequence).
-
-## Reference-only
-
-`PacketSniffer` elsewhere in `devprojects/` is not part of this repo and must not be copied in wholesale.
+Details live in `docs/roadmap.md`, `docs/architecture.md`, and `docs/api.md`. Working notes (UI debugging, settings parity audit) are in `docs/notes/`.

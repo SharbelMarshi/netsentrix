@@ -538,6 +538,7 @@ fn spawn_log(shared: &DnsLoopShared, row: DnsQueryRow) {
             .unwrap_or("")
             .to_string(),
         action: row.action.clone(),
+        query_type: row.query_type.clone(),
     };
     tokio::task::spawn(async move {
         let row2 = row.clone();

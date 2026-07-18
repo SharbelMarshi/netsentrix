@@ -7,4 +7,5 @@ pub struct DnsQueryEvent {
     pub domain: String,
     pub client_ip: String,
     pub action: String,
+    pub query_type: String,
 }

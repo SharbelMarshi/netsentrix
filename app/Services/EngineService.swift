@@ -44,10 +44,21 @@ final class EngineService: ObservableObject {
     @Published private(set) var dnsCacheHitRateHistory: [Double] = []
 
     private var dnsWebSocketTask: URLSessionWebSocketTask?
-    private var dnsSocketReceiveTask: Task<Void, Never>?
+    private var dnsSocketSupervisorTask: Task<Void, Never>?
+    private var sparklineTimerTask: Task<Void, Never>?
     private var sparklineEventTimes: [Date] = []
     private var dnsWebSocketRetainCount = 0
     private let dnsCacheHitRateHistoryMax = 12
+
+    /// Connection state of the live `GET /ws` feed (drives the live/disconnected indicator).
+    enum LiveFeedStatus: Equatable {
+        case idle
+        case connecting
+        case live
+        case reconnecting
+    }
+
+    @Published private(set) var liveFeedStatus: LiveFeedStatus = .idle
 
     @Published private(set) var hasCompletedInitialHealthFetch = false
     @Published private(set) var hasCompletedInitialStatsFetch = false

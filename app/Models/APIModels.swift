@@ -64,9 +64,12 @@ struct DnsQueryItem: Decodable, Identifiable, Sendable {
         case latencyMs = "latency_ms"
     }
 
-    /// Live WebSocket rows use a negative id (no DB row).
+    /// Live WebSocket rows use a negative id (no DB row). A monotonic counter —
+    /// not the timestamp — so two events in the same millisecond stay distinct.
+    private static let liveIdCounter = LiveIdCounter()
+
     init(liveTimestamp: Int64, deviceId: String?, domain: String, queryType: String, action: String) {
-        self.id = liveTimestamp > 0 ? -liveTimestamp : liveTimestamp
+        self.id = Self.liveIdCounter.next()
         self.timestampMs = liveTimestamp
         self.deviceId = deviceId
         self.domain = domain
@@ -84,6 +87,19 @@ struct DnsQueryItem: Decodable, Identifiable, Sendable {
     var isAllowedOutcome: Bool {
         let a = action.lowercased()
         return a.contains("allow") && !a.contains("block")
+    }
+}
+
+/// Thread-safe descending negative id source for live rows.
+private final class LiveIdCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Int64 = 0
+
+    func next() -> Int64 {
+        lock.lock()
+        defer { lock.unlock() }
+        value -= 1
+        return value
     }
 }
 
@@ -322,10 +338,13 @@ struct WsDnsEvent: Decodable, Sendable {
         let domain: String
         let action: String
         let clientIp: String
+        /// Absent on older engines.
+        let queryType: String?
 
         enum CodingKeys: String, CodingKey {
             case domain, action
             case clientIp = "client_ip"
+            case queryType = "query_type"
         }
     }
 

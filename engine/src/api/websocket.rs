@@ -53,6 +53,7 @@ async fn handle_socket(mut socket: axum::extract::ws::WebSocket, state: Arc<AppS
                                 "domain": ev.domain,
                                 "action": ev.action,
                                 "client_ip": ev.client_ip,
+                                "query_type": ev.query_type,
                             }
                         });
                         if socket.send(Message::Text(j.to_string())).await.is_err() {

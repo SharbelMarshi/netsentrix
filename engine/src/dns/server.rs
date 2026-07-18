@@ -415,6 +415,7 @@ fn build_outbound_query(id: u16, qname: &str, qtype: u16, qclass: u16) -> Option
 }
 
 /// Forward allowed queries with bounded CNAME chasing (A/AAAA).
+#[allow(clippy::too_many_arguments)]
 async fn forward_allow_resolve(
     shared: &DnsLoopShared,
     pq: &crate::dns::parser::ParsedQuestion,

@@ -24,6 +24,7 @@ pub struct PacketEvent {
     pub device_id: Option<String>,
 }
 
+#[allow(dead_code)] // DTO reserved for future packet-capture work
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ActivityEvent {
     pub timestamp_ms: i64,

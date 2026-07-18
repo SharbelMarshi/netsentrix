@@ -14,8 +14,11 @@ jobs:
         working-directory: engine
     steps:
       - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: engine
       - name: Clippy
-        run: cargo clippy --all-targets
+        run: cargo clippy --all-targets -- -D warnings
       - name: Test
         run: cargo test
 
@@ -26,5 +29,12 @@ jobs:
         working-directory: app
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: app/.build
+          key: ${{ runner.os }}-spm-${{ hashFiles('app/Package.swift') }}
+          restore-keys: ${{ runner.os }}-spm-
       - name: Swift build
         run: swift build
+      - name: Swift test
+        run: swift test

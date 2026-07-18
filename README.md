@@ -29,7 +29,16 @@ cd app && swift run NetSentrix
 
 Or open `app/Package.swift` in Xcode and run the `NetSentrix` target. `#Preview` macros are left out of the sources because plain `swift build` can't compile them; add previews back in Xcode-only targets if you want them.
 
-A `Makefile` at the repo root has shortcuts (`make engine`, `make app`, `make test-engine`). CI runs clippy, `cargo test`, and `swift build` on every push.
+A `Makefile` at the repo root has shortcuts (`make engine`, `make app`, `make test-engine`, `make test-app`). CI runs clippy (warnings fail the build), `cargo test`, `swift build`, and `swift test` on every push.
+
+## Building the app bundle
+
+```bash
+make bundle        # dist/NetSentrix.app (release build, icon, ad-hoc signed)
+make bundle-full   # same, plus the Rust engine embedded in Contents/Resources/bin/
+```
+
+The bundler is a Swift script at `packaging/macos/app/bundle.swift`. It renders the app icon from `docs/assets/logo-crystal-mark.svg` with AppKit, so there are no external tool dependencies. The result is ad-hoc signed — fine for local use; distribution to other Macs needs a Developer ID certificate and notarization.
 
 ## What works today
 
@@ -38,3 +47,7 @@ The engine serves DNS over UDP and TCP with a response cache, blocklist/allowlis
 Not shipped yet: packet capture (`engine/src/sniffer/` only holds event types for future work), and the enrich and behavioral-rules trees are stubs.
 
 Details live in `docs/roadmap.md`, `docs/architecture.md`, and `docs/api.md`. Working notes (UI debugging, settings parity audit) are in `docs/notes/`.
+
+## License
+
+Proprietary — all rights reserved. See `LICENSE`.

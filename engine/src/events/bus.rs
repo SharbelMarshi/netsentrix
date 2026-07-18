@@ -10,6 +10,7 @@ const CAPACITY: usize = 1024;
 /// Fan-out for API WebSocket and other subscribers.
 pub struct EventBus {
     dns_tx: broadcast::Sender<DnsQueryEvent>,
+    #[allow(dead_code)] // reserved for packet capture (see module doc)
     packet_tx: broadcast::Sender<PacketEvent>,
     alert_tx: broadcast::Sender<DetectionEvent>,
 }
@@ -34,14 +35,17 @@ impl EventBus {
         let _ = self.dns_tx.send(ev);
     }
 
+    #[allow(dead_code)] // reserved for packet capture (see module doc)
     pub fn subscribe_packet_activity(&self) -> broadcast::Receiver<PacketEvent> {
         self.packet_tx.subscribe()
     }
 
+    #[allow(dead_code)] // reserved for packet capture (see module doc)
     pub fn publish_packet_activity(&self, ev: PacketEvent) {
         let _ = self.packet_tx.send(ev);
     }
 
+    #[allow(dead_code)] // no subscriber yet; alerts publish only
     pub fn subscribe_alert_triggered(&self) -> broadcast::Receiver<DetectionEvent> {
         self.alert_tx.subscribe()
     }

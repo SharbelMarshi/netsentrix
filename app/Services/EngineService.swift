@@ -504,7 +504,7 @@ final class EngineService: ObservableObject {
     private func applyDomainRule(raw: String, allow: Bool) async {
         lastOperationError = nil
         lastDomainRuleSuccess = nil
-        let p = Self.normalizeDomainPattern(raw)
+        let p = DomainPattern.normalize(raw)
         guard !p.isEmpty else {
             lastOperationError = "Enter a domain name."
             return
@@ -525,11 +525,5 @@ final class EngineService: ObservableObject {
             lastDomainRuleSuccess = nil
             lastOperationError = error.localizedDescription
         }
-    }
-
-    private static func normalizeDomainPattern(_ raw: String) -> String {
-        var s = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        while s.hasSuffix(".") { s.removeLast() }
-        return s
     }
 }

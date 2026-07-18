@@ -531,6 +531,7 @@ fn load_domains<P: rusqlite::Params>(
     Ok(domains)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn try_push_alert(
     conn: &Connection,
     now_ms: i64,

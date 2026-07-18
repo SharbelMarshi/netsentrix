@@ -27,9 +27,18 @@ let package = Package(
                 "ViewModels/ProductStatusAdapter.swift",
                 "Models/HealthModels.swift",
                 "Models/APIModels.swift",
+                "Models/DomainPattern.swift",
                 "Networking/EngineAPIClient.swift",
                 "Services/EngineService.swift",
                 "Services/APITokenLoader.swift",
+            ]
+        ),
+        .testTarget(
+            name: "NetSentrixTests",
+            dependencies: ["NetSentrix"],
+            path: "Tests/NetSentrixTests",
+            resources: [
+                .copy("Fixtures"),
             ]
         ),
     ]

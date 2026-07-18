@@ -16,10 +16,10 @@ test-engine:
 test-app:
 	cd app && swift test
 
-# dist/NetSentrix.app from the release build (app only).
-bundle:
+# dist/NetSentrix.app — release app with the engine embedded (the app
+# auto-starts it). bundle-full kept as an alias; use --app-only to skip.
+bundle bundle-full:
 	swift packaging/macos/app/bundle.swift
 
-# Same, with the Rust engine embedded at Contents/Resources/bin/.
-bundle-full:
-	swift packaging/macos/app/bundle.swift --with-engine
+bundle-app-only:
+	swift packaging/macos/app/bundle.swift --app-only

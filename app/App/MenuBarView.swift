@@ -2,11 +2,17 @@ import SwiftUI
 
 struct MenuBarView: View {
     @EnvironmentObject private var engine: EngineService
+    @EnvironmentObject private var engineProcess: EngineProcessManager
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         Group {
             Text(protectionSummary)
+            if engine.isEngineUnreachable {
+                Button("Start engine") {
+                    Task { await engineProcess.start(engineService: engine) }
+                }
+            }
             if let paused = engine.lastHealth?.dnsPaused {
                 if paused {
                     Button("Resume DNS answering") {
@@ -32,6 +38,7 @@ struct MenuBarView: View {
             }
         }
         .task {
+            await engineProcess.autostartIfNeeded(engineService: engine)
             await engine.refreshHealth()
         }
     }

@@ -1,10 +1,11 @@
 #!/usr/bin/env swift
 // Assembles dist/NetSentrix.app from the SPM release binary.
 //
-//   swift packaging/macos/app/bundle.swift [--with-engine]
+//   swift packaging/macos/app/bundle.swift [--app-only]
 //
-// --with-engine also builds the Rust engine (release) and embeds it at
-// Contents/Resources/bin/netsentrix-engine for installer use.
+// By default the Rust engine is built (release) and embedded at
+// Contents/Resources/bin/netsentrix-engine, with the SMAppService daemon
+// plist alongside — the app auto-starts this engine. --app-only skips both.
 //
 // The app icon is rasterized from docs/assets/logo-crystal-mark.svg via
 // AppKit (native SVG decoding, macOS 11+), so no external tools are needed.
@@ -20,7 +21,7 @@ let repoRoot = scriptURL
     .deletingLastPathComponent() // repo root
 
 let fm = FileManager.default
-let withEngine = CommandLine.arguments.contains("--with-engine")
+let withEngine = !CommandLine.arguments.contains("--app-only")
 
 func fail(_ message: String) -> Never {
     FileHandle.standardError.write(Data("error: \(message)\n".utf8))

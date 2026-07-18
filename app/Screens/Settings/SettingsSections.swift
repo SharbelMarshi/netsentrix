@@ -223,7 +223,7 @@ struct EngineDaemonSection: View {
                     }
                 } else {
                     Text(
-                        "No embedded engine in this build. Use an app built with `make bundle-full`, or manage the engine with launchctl (see packaging/macos/launchd/)."
+                        "No embedded engine in this build. Use an app built with `make bundle`, or manage the engine with launchctl (see packaging/macos/launchd/)."
                     )
                     .font(.caption)
                     .foregroundStyle(Theme.textSecondary)

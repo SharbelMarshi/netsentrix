@@ -4,12 +4,17 @@ import SwiftUI
 struct NetSentrixApp: App {
     @StateObject private var appModel = AppViewModel()
     @StateObject private var engineService = EngineService()
+    @StateObject private var engineProcess = EngineProcessManager()
 
     var body: some Scene {
         WindowGroup(id: "main") {
             RootView()
                 .environmentObject(appModel)
                 .environmentObject(engineService)
+                .environmentObject(engineProcess)
+                .task {
+                    await engineProcess.autostartIfNeeded(engineService: engineService)
+                }
         }
         .defaultSize(width: 1040, height: 700)
         .commands {
@@ -38,11 +43,13 @@ struct NetSentrixApp: App {
         Settings {
             AppSettingsView()
                 .environmentObject(engineService)
+                .environmentObject(engineProcess)
         }
 
         MenuBarExtra("NetSentrix", systemImage: menuBarSymbol) {
             MenuBarView()
                 .environmentObject(engineService)
+                .environmentObject(engineProcess)
         }
     }
 

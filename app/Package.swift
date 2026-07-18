@@ -35,6 +35,7 @@ let package = Package(
                 "Services/EngineService.swift",
                 "Services/APITokenLoader.swift",
                 "Services/EngineEndpoint.swift",
+                "Services/EngineProcessManager.swift",
                 "Services/EngineDaemonManager.swift",
                 "Services/AlertNotifier.swift",
             ]

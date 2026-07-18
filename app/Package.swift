@@ -12,6 +12,7 @@ let package = Package(
             name: "NetSentrix",
             dependencies: [],
             path: ".",
+            exclude: ["Tests"],
             sources: [
                 "App/NetSentrixApp.swift",
                 "App/RootView.swift",

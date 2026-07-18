@@ -1,23 +1,25 @@
-# Optional dev shortcuts (see README for full paths).
-.PHONY: engine app app-run test-engine test-app bundle bundle-full
+# Dev shortcuts (see README for details).
+.PHONY: engine app app-run test-engine test-app bundle bundle-full bundle-app-only
+
+XCODEBUILD = xcodebuild -project app/NetSentrix.xcodeproj -scheme NetSentrix -destination 'platform=macOS'
 
 engine:
 	cd engine && cargo run
 
 app:
-	cd app && swift build
+	$(XCODEBUILD) -configuration Debug build
 
-app-run:
-	cd app && swift run NetSentrix
+app-run: app
+	open "$$(xcodebuild -project app/NetSentrix.xcodeproj -scheme NetSentrix -configuration Debug -destination 'platform=macOS' -showBuildSettings 2>/dev/null | awk '/ BUILT_PRODUCTS_DIR =/{print $$3}')/NetSentrix.app"
 
 test-engine:
 	cd engine && cargo test
 
 test-app:
-	cd app && swift test
+	$(XCODEBUILD) test
 
 # dist/NetSentrix.app — release app with the engine embedded (the app
-# auto-starts it). bundle-full kept as an alias; use --app-only to skip.
+# auto-starts it). bundle-full kept as an alias; bundle-app-only skips the engine.
 bundle bundle-full:
 	swift packaging/macos/app/bundle.swift
 

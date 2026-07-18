@@ -3,8 +3,10 @@ import XCTest
 
 final class HealthDecodingTests: XCTestCase {
     func testDecodesMinimalHealthFixture() throws {
+        let bundle = Bundle(for: HealthDecodingTests.self)
         let url = try XCTUnwrap(
-            Bundle.module.url(forResource: "health_minimal", withExtension: "json", subdirectory: "Fixtures")
+            bundle.url(forResource: "health_minimal", withExtension: "json", subdirectory: "Fixtures")
+                ?? bundle.url(forResource: "health_minimal", withExtension: "json")
         )
         let data = try Data(contentsOf: url)
         let health = try JSONDecoder().decode(HealthResponse.self, from: data)

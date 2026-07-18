@@ -354,3 +354,22 @@ struct WsDnsEvent: Decodable, Sendable {
         case payload
     }
 }
+
+/// `GET /policy/time-overrides` row — minute-of-day window (local time) that
+/// overrides device DNS policy; overnight when `startMin > endMin`.
+struct TimeOverrideDTO: Decodable, Identifiable, Sendable {
+    let id: Int64
+    let scopeDeviceId: String?
+    let startMin: Int
+    let endMin: Int
+    let dnsPolicy: String
+    let enabled: Bool
+
+    enum CodingKeys: String, CodingKey {
+        case id, enabled
+        case scopeDeviceId = "scope_device_id"
+        case startMin = "start_min"
+        case endMin = "end_min"
+        case dnsPolicy = "dns_policy"
+    }
+}

@@ -80,6 +80,8 @@ struct SettingsView: View {
                     }
                 }
 
+                EngineConnectionSection()
+
                 dnsAnsweringGroup
 
                 GroupBox("Upstream resolver") {
@@ -306,11 +308,11 @@ struct SettingsView: View {
                     }
                 }
 
-                GroupBox("Engine process") {
-                    Text("Start, stop, and upgrades are handled outside this app (e.g. launchctl for a LaunchDaemon).")
-                        .font(.caption)
-                        .foregroundStyle(Theme.textSecondary)
-                }
+                TimeOverridesSection()
+
+                NotificationsSection()
+
+                EngineDaemonSection()
 
                 HStack(spacing: 12) {
                     Button("Refresh from engine") {

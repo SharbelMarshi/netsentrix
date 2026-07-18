@@ -21,10 +21,15 @@ enum EngineAPIError: Error, LocalizedError {
 
 /// Localhost API client; mutating POST uses Bearer token from Application Support.
 struct EngineAPIClient: Sendable {
-    var baseURL: URL
+    /// Fixed URL for tests; nil follows the user-configurable endpoint.
+    private let overrideBaseURL: URL?
 
-    init(baseURL: URL = URL(string: "http://127.0.0.1:8756")!) {
-        self.baseURL = baseURL
+    var baseURL: URL {
+        overrideBaseURL ?? EngineEndpoint.current
+    }
+
+    init(baseURL: URL? = nil) {
+        self.overrideBaseURL = baseURL
     }
 
     /// WebSocket URL for `GET /ws` (same host/port as REST, `ws` or `wss` scheme).
@@ -199,6 +204,47 @@ struct EngineAPIClient: Sendable {
         try await postJSON(url: url, body: PatternPostBody(pattern: pattern))
     }
 
+    /// `GET /policy/time-overrides` — Bearer required.
+    func timeOverrides() async throws -> [TimeOverrideDTO] {
+        let env: ApiEnvelope<[TimeOverrideDTO]> = try await get(
+            path: "policy/time-overrides",
+            decode: ApiEnvelope<[TimeOverrideDTO]>.self
+        )
+        guard env.ok, let d = env.data else {
+            throw EngineAPIError.apiError(env.error?.code ?? "unknown", env.error?.message ?? "time overrides failed")
+        }
+        return d
+    }
+
+    /// `POST /policy/time-overrides` — minutes are 0–1439 (local time-of-day; overnight when start > end).
+    func postTimeOverride(scopeDeviceId: String?, startMin: Int, endMin: Int, dnsPolicy: String) async throws {
+        struct Body: Encodable {
+            let scopeDeviceId: String?
+            let startMin: Int
+            let endMin: Int
+            let dnsPolicy: String
+            enum CodingKeys: String, CodingKey {
+                case scopeDeviceId = "scope_device_id"
+                case startMin = "start_min"
+                case endMin = "end_min"
+                case dnsPolicy = "dns_policy"
+            }
+        }
+        let url = baseURL.appendingPathComponent("policy/time-overrides", isDirectory: false)
+        try await postJSON(
+            url: url,
+            body: Body(scopeDeviceId: scopeDeviceId, startMin: startMin, endMin: endMin, dnsPolicy: dnsPolicy)
+        )
+    }
+
+    /// `DELETE /policy/time-overrides/:id`.
+    func deleteTimeOverride(id: Int64) async throws {
+        let url = baseURL
+            .appendingPathComponent("policy/time-overrides", isDirectory: false)
+            .appendingPathComponent(String(id), isDirectory: false)
+        try await postJSON(method: "DELETE", url: url, body: EmptyJSON())
+    }
+
     // MARK: - Low level
 
     private struct PatternPostBody: Encodable {
@@ -213,8 +259,12 @@ struct EngineAPIClient: Sendable {
     private func get<T: Decodable>(url: URL, decode: T.Type) async throws -> T {
         var req = URLRequest(url: url)
         req.timeoutInterval = 10
+        if let t = token() {
+            req.setValue("Bearer \(t)", forHTTPHeaderField: "Authorization")
+        }
         let (data, resp) = try await URLSession.shared.data(for: req)
         guard let http = resp as? HTTPURLResponse else { throw EngineAPIError.badStatus(-1) }
+        if http.statusCode == 401 { throw EngineAPIError.unauthorized }
         guard (200 ..< 300).contains(http.statusCode) else { throw EngineAPIError.badStatus(http.statusCode) }
         do {
             return try JSONDecoder().decode(T.self, from: data)

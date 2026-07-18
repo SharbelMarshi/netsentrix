@@ -48,6 +48,9 @@ struct QueriesView: View {
                     .foregroundStyle(Theme.textSecondary)
                 Text("·")
                     .foregroundStyle(Theme.textSecondary)
+                liveFeedBadge
+                Text("·")
+                    .foregroundStyle(Theme.textSecondary)
                 Text("Updated \(relativeRefreshString())")
                     .font(.caption)
                     .foregroundStyle(Theme.textSecondary)

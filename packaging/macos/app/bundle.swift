@@ -157,6 +157,13 @@ do {
         let binDir = resourcesDir.appendingPathComponent("bin")
         try fm.createDirectory(at: binDir, withIntermediateDirectories: true)
         try fm.copyItem(at: engineBinary, to: binDir.appendingPathComponent("netsentrix-engine"))
+        // SMAppService daemon plist so the app can register the embedded engine.
+        let daemonsDir = contents.appendingPathComponent("Library/LaunchDaemons")
+        try fm.createDirectory(at: daemonsDir, withIntermediateDirectories: true)
+        try fm.copyItem(
+            at: scriptURL.deletingLastPathComponent().appendingPathComponent("com.netsentrix.engine.plist"),
+            to: daemonsDir.appendingPathComponent("com.netsentrix.engine.plist")
+        )
     }
 } catch {
     fail("bundle assembly failed: \(error.localizedDescription)")

@@ -84,8 +84,28 @@ final class EngineService: ObservableObject {
     /// True while POST `/block` or `/allow` is in flight.
     @Published private(set) var isApplyingDomainRule = false
 
+    @Published private(set) var timeOverrides: [TimeOverrideDTO] = []
+    @Published private(set) var timeOverridesFetchError: String?
+
+    private var alertsPollTask: Task<Void, Never>?
+
     init(client: EngineAPIClient = EngineAPIClient()) {
         self.client = client
+        startAlertsBackgroundPoll()
+    }
+
+    /// Polls `/alerts` once a minute so notifications fire even when the
+    /// Alerts screen is closed. Skips work while notifications are disabled.
+    private func startAlertsBackgroundPoll() {
+        guard AlertNotifier.isSupported else { return }
+        alertsPollTask = Task { [weak self] in
+            while !Task.isCancelled {
+                if AlertNotifier.isEnabled {
+                    await self?.refreshAlerts()
+                }
+                try? await Task.sleep(nanoseconds: 60_000_000_000)
+            }
+        }
     }
 
     /// True after first health attempt and engine appears unreachable.
@@ -176,6 +196,7 @@ final class EngineService: ObservableObject {
         dnsWebSocketRetainCount += 1
         if dnsWebSocketRetainCount == 1 {
             startQueriesWebSocketIfNeeded()
+            startSparklineTimer()
         }
     }
 
@@ -183,32 +204,58 @@ final class EngineService: ObservableObject {
         dnsWebSocketRetainCount = max(0, dnsWebSocketRetainCount - 1)
         if dnsWebSocketRetainCount == 0 {
             stopQueriesWebSocket()
+            stopSparklineTimer()
         }
     }
 
     private func startQueriesWebSocketIfNeeded() {
-        guard dnsWebSocketTask == nil else { return }
-        guard let url = client.websocketURL else { return }
-        let task = URLSession.shared.webSocketTask(with: url)
-        dnsWebSocketTask = task
-        task.resume()
-        dnsSocketReceiveTask = Task { [weak self] in
-            await self?.runDnsSocketReceiveLoop(task)
+        guard dnsSocketSupervisorTask == nil else { return }
+        dnsSocketSupervisorTask = Task { [weak self] in
+            await self?.runDnsSocketSupervisor()
         }
     }
 
     private func stopQueriesWebSocket() {
-        dnsSocketReceiveTask?.cancel()
-        dnsSocketReceiveTask = nil
+        dnsSocketSupervisorTask?.cancel()
+        dnsSocketSupervisorTask = nil
         dnsWebSocketTask?.cancel(with: .goingAway, reason: nil)
         dnsWebSocketTask = nil
+        liveFeedStatus = .idle
     }
 
-    private func runDnsSocketReceiveLoop(_ task: URLSessionWebSocketTask) async {
+    /// Owns the socket lifecycle: connect, drain, and reconnect with exponential
+    /// backoff (1s → 30s) until released. Backoff resets once a frame arrives.
+    private func runDnsSocketSupervisor() async {
+        var backoffSeconds = 1.0
+        while !Task.isCancelled {
+            guard let url = client.websocketURL else { return }
+            liveFeedStatus = .connecting
+            let task = URLSession.shared.webSocketTask(with: url)
+            dnsWebSocketTask = task
+            task.resume()
+            let receivedAnyMessage = await runDnsSocketReceiveLoop(task)
+            task.cancel(with: .goingAway, reason: nil)
+            dnsWebSocketTask = nil
+            if Task.isCancelled { break }
+            if receivedAnyMessage {
+                backoffSeconds = 1.0
+            }
+            liveFeedStatus = .reconnecting
+            try? await Task.sleep(nanoseconds: UInt64(backoffSeconds * 1_000_000_000))
+            backoffSeconds = min(backoffSeconds * 2, 30)
+        }
+    }
+
+    private func runDnsSocketReceiveLoop(_ task: URLSessionWebSocketTask) async -> Bool {
+        var receivedAnyMessage = false
         while !Task.isCancelled {
             do {
                 let msg = try await task.receive()
                 if Task.isCancelled { break }
+                if !receivedAnyMessage {
+                    receivedAnyMessage = true
+                    liveFeedStatus = .live
+                }
                 let text: String?
                 switch msg {
                 case .string(let s): text = s
@@ -224,26 +271,46 @@ final class EngineService: ObservableObject {
                     liveTimestamp: ev.timestamp,
                     deviceId: dev,
                     domain: ev.payload.domain,
-                    queryType: "A",
+                    queryType: ev.payload.queryType ?? "—",
                     action: ev.payload.action
                 )
-                await MainActor.run {
-                    self.liveWsQueries.insert(row, at: 0)
-                    if self.liveWsQueries.count > 150 {
-                        self.liveWsQueries.removeLast()
-                    }
-                    self.bumpQueriesDisplayRevision()
-                    self.recordSparklineEvent()
+                liveWsQueries.insert(row, at: 0)
+                if liveWsQueries.count > 150 {
+                    liveWsQueries.removeLast()
                 }
+                bumpQueriesDisplayRevision()
+                recordSparklineEvent()
             } catch {
                 break
             }
         }
+        return receivedAnyMessage
+    }
+
+    /// Keeps the sparkline draining to zero during idle periods; without it the
+    /// buckets only recompute when an event arrives.
+    private func startSparklineTimer() {
+        guard sparklineTimerTask == nil else { return }
+        sparklineTimerTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                self?.recomputeSparklineBuckets()
+            }
+        }
+    }
+
+    private func stopSparklineTimer() {
+        sparklineTimerTask?.cancel()
+        sparklineTimerTask = nil
     }
 
     private func recordSparklineEvent() {
+        sparklineEventTimes.append(Date())
+        recomputeSparklineBuckets()
+    }
+
+    private func recomputeSparklineBuckets() {
         let now = Date()
-        sparklineEventTimes.append(now)
         sparklineEventTimes.removeAll { now.timeIntervalSince($0) > 60 }
         let buckets: [Int] = (0 ..< 12).map { i in
             let older = Double(11 - i) * 5.0
@@ -282,8 +349,44 @@ final class EngineService: ObservableObject {
         do {
             alerts = try await client.alerts()
             alertsFetchError = nil
+            AlertNotifier.shared.processRefreshedAlerts(alerts)
         } catch {
             alertsFetchError = error.localizedDescription
+        }
+    }
+
+    func refreshTimeOverrides() async {
+        do {
+            timeOverrides = try await client.timeOverrides()
+            timeOverridesFetchError = nil
+        } catch {
+            timeOverridesFetchError = error.localizedDescription
+        }
+    }
+
+    /// Adds a scheduled DNS-policy window and refreshes the list.
+    func addTimeOverride(scopeDeviceId: String?, startMin: Int, endMin: Int, dnsPolicy: String) async {
+        lastOperationError = nil
+        do {
+            try await client.postTimeOverride(
+                scopeDeviceId: scopeDeviceId,
+                startMin: startMin,
+                endMin: endMin,
+                dnsPolicy: dnsPolicy
+            )
+            await refreshTimeOverrides()
+        } catch {
+            lastOperationError = error.localizedDescription
+        }
+    }
+
+    func deleteTimeOverride(id: Int64) async {
+        lastOperationError = nil
+        do {
+            try await client.deleteTimeOverride(id: id)
+            await refreshTimeOverrides()
+        } catch {
+            lastOperationError = error.localizedDescription
         }
     }
 

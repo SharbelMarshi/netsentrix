@@ -13,6 +13,9 @@ Use this checklist against `docs/api.md` and the running engine. **Phase 4:** co
 | Reload config | `POST /reload` | Settings → Reload from disk |
 | Export CSV | `GET /queries/export.csv` | Settings → Export queries |
 | Runtime paths / pause | `GET /health` | Settings → Runtime (from health) |
-| Time overrides | `GET/POST/DELETE /policy/time-overrides` | API-only unless UI added |
+| Time overrides | `GET/POST/DELETE /policy/time-overrides` | Settings → Scheduled DNS policies |
+| Engine API address | (client-side) | Settings → Engine connection |
+| Engine daemon install | SMAppService (embedded plist) | Settings → Engine process |
+| Alert notifications | `GET /alerts` (polled) | Settings → Notifications |
 
 Update this table when routes or screens change.

@@ -42,7 +42,9 @@ The bundler is a Swift script at `packaging/macos/app/bundle.swift`. It renders 
 
 ## What works today
 
-The engine serves DNS over UDP and TCP with a response cache, blocklist/allowlist and DB-backed rules, and query logging in SQLite (WAL mode, `user_version` migrations). The API covers health (including engine-derived protection status), settings, block/allow, DNS pause/resume, and a WebSocket at `/ws` fed by the internal event bus. The app has Dashboard, Setup, Devices, Queries (REST polling plus live WebSocket), Alerts, and Settings screens, and authenticates with the Bearer token from the path above.
+The engine serves DNS over UDP and TCP with a response cache, blocklist/allowlist and DB-backed rules, and query logging in SQLite (WAL mode, `user_version` migrations). The API covers health (including engine-derived protection status), settings, block/allow, DNS pause/resume, scheduled per-device policy windows, and a WebSocket at `/ws` fed by the internal event bus.
+
+The app has Dashboard, Setup, Devices, Queries (REST polling plus a live WebSocket feed that reconnects with backoff), Alerts, and Settings screens, and authenticates with the Bearer token from the path above. It also ships a menu bar status item with DNS pause/resume, optional macOS notifications for new alerts, a scheduled-DNS-policies editor, a configurable engine address, and follows the system light/dark appearance. Bundles built with `make bundle-full` can install the embedded engine as a LaunchDaemon straight from Settings → Engine process (SMAppService; approval in System Settings → Login Items).
 
 Not shipped yet: packet capture (`engine/src/sniffer/` only holds event types for future work), and the enrich and behavioral-rules trees are stubs.
 

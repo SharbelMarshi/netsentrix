@@ -156,6 +156,8 @@ Bearer. **No-ops / placeholders** — do not assume the LAN DNS process exits or
 
 Upgrade to WebSocket; JSON messages with DNS-related event shapes for live tail (see `engine/src/api/websocket.rs`).
 
+Message shape: `{ "type": "DNS_QUERY" | "DNS_ALLOWED" | "DNS_BLOCKED", "timestamp": ms, "device_id": "ip:…", "payload": { "domain", "action", "client_ip", "query_type" } }`. `query_type` is absent on older engines — clients must treat it as optional.
+
 ## Client default port
 
 The template config uses **`127.0.0.1:8756`** for the API so unprivileged dev does not require port 53. DNS listen may use another port in dev; production may use `:53` with appropriate privileges.

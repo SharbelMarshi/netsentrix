@@ -37,6 +37,8 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
 
+    spawn_parent_watchdog_if_requested();
+
     let config_path = config::resolved_config_path();
     let initial = config::load().context("load config")?;
     tracing::info!(
@@ -140,4 +142,28 @@ async fn shutdown_signal() {
     tokio::signal::ctrl_c()
         .await
         .expect("install CTRL+C listener");
+}
+
+/// When `NETSENTRIX_EXIT_ON_STDIN_CLOSE=1` (set by the app when it spawns the
+/// engine as a child), exit as soon as stdin hits EOF. The app holds the write
+/// end of the pipe, so the OS closes it even if the app is force-killed — the
+/// engine never outlives the app that started it. Absent for daemon runs.
+fn spawn_parent_watchdog_if_requested() {
+    if std::env::var("NETSENTRIX_EXIT_ON_STDIN_CLOSE").as_deref() != Ok("1") {
+        return;
+    }
+    std::thread::spawn(|| {
+        use std::io::Read;
+        let mut buf = [0u8; 64];
+        let mut stdin = std::io::stdin();
+        loop {
+            match stdin.read(&mut buf) {
+                Ok(0) | Err(_) => {
+                    tracing::info!("stdin closed — parent app is gone, exiting");
+                    std::process::exit(0);
+                }
+                Ok(_) => {}
+            }
+        }
+    });
 }

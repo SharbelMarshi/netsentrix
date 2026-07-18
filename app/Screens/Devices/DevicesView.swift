@@ -44,10 +44,6 @@ struct DevicesView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Devices")
-                .font(.title2.weight(.semibold))
-                .foregroundStyle(Theme.textPrimary)
-
             Text(
                 "Clients observed from DNS traffic through NetSentrix (IP-based). Counts come from logged queries — not packet discovery or DHCP."
             )
@@ -197,7 +193,6 @@ struct DevicesView: View {
         }
         .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Theme.deepNavy)
         .task { await engine.refreshDevices() }
         .onChange(of: detailDevice?.id) { _ in
             tagsEditText = detailDevice?.tags ?? ""
@@ -382,7 +377,7 @@ struct DevicesView: View {
                 }
                 Spacer()
                 if detailRefreshing {
-                    ProgressView().scaleEffect(0.75)
+                    ProgressView().controlSize(.small)
                 }
             }
 

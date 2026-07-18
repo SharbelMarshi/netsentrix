@@ -11,10 +11,6 @@ struct AlertsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Alerts")
-                .font(.title2.weight(.semibold))
-                .foregroundStyle(Theme.textPrimary)
-
             Button("Refresh") {
                 Task { await engine.refreshAlerts() }
             }
@@ -172,7 +168,6 @@ struct AlertsView: View {
         }
         .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Theme.deepNavy)
         .confirmationDialog(
             "Block this domain?",
             isPresented: Binding(

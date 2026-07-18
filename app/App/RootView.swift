@@ -2,6 +2,7 @@ import SwiftUI
 
 struct RootView: View {
     @EnvironmentObject private var appModel: AppViewModel
+    @EnvironmentObject private var engine: EngineService
 
     var body: some View {
         NavigationSplitView {
@@ -9,38 +10,24 @@ struct RootView: View {
                 ForEach(AppDestination.allCases) { dest in
                     Label(dest.title, systemImage: dest.systemImage)
                         .tag(dest)
-                        .listRowBackground(sidebarRowBackground(selected: appModel.selectedDestination == dest))
                 }
             }
-            .navigationTitle("NetSentrix")
             .listStyle(.sidebar)
-            .scrollContentBackground(.hidden)
-            .frame(minWidth: 200)
-            .background(Theme.deepNavy)
+            .navigationSplitViewColumnWidth(min: 180, ideal: 210)
         } detail: {
             detailView(for: appModel.selectedDestination)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .tint(Theme.accent)
-        .background(Theme.surface)
-    }
-
-    @ViewBuilder
-    private func sidebarRowBackground(selected: Bool) -> some View {
-        if selected {
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(Theme.cardBackground)
-                .overlay(alignment: .leading) {
-                    RoundedRectangle(cornerRadius: 1.5, style: .continuous)
-                        .fill(Theme.accent.opacity(0.95))
-                        .frame(width: 3)
-                        .padding(.vertical, 6)
-                        .padding(.leading, 4)
+                .navigationTitle(appModel.selectedDestination.title)
+                .toolbar {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button {
+                            Task { await refreshCurrentScreen() }
+                        } label: {
+                            Label("Refresh", systemImage: "arrow.clockwise")
+                        }
+                        .help("Refresh this screen (⌘R)")
+                    }
                 }
-                .padding(.vertical, 2)
-                .padding(.horizontal, 4)
-        } else {
-            Color.clear
         }
     }
 
@@ -53,6 +40,22 @@ struct RootView: View {
         case .alerts: AlertsView()
         case .setup: SetupView()
         case .settings: SettingsView()
+        }
+    }
+
+    private func refreshCurrentScreen() async {
+        switch appModel.selectedDestination {
+        case .dashboard, .setup:
+            await engine.refreshAllDashboardData()
+        case .devices:
+            await engine.refreshDevices()
+        case .queries:
+            await engine.refreshQueries(limit: 100, deviceId: appModel.queriesDeviceFilterId)
+        case .alerts:
+            await engine.refreshAlerts()
+        case .settings:
+            await engine.refreshSettings()
+            await engine.refreshHealth()
         }
     }
 }

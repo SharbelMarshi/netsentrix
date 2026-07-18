@@ -43,10 +43,6 @@ struct SetupView: View {
 
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                Text("Setup")
-                    .font(.title2.weight(.semibold))
-                    .foregroundStyle(Theme.textPrimary)
-
                 Text("Point your router’s DHCP DNS at this Mac so LAN devices use NetSentrix as their resolver. The app can only observe and filter DNS that actually reaches this engine — not traffic that bypasses it.")
                     .font(.callout)
                     .foregroundStyle(Theme.textSecondary)
@@ -101,7 +97,6 @@ struct SetupView: View {
             .padding(24)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Theme.deepNavy)
         .task {
             await engine.refreshAllDashboardData()
         }

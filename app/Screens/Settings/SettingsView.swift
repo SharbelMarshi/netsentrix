@@ -28,10 +28,6 @@ struct SettingsView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                Text("Settings")
-                    .font(.title2.weight(.semibold))
-                    .foregroundStyle(Theme.textPrimary)
-
                 Text("Operator controls for the NetSentrix engine on this Mac. Changes need API access (Bearer token).")
                     .font(.callout)
                     .foregroundStyle(Theme.textSecondary)
@@ -242,7 +238,7 @@ struct SettingsView: View {
                                     || engine.isApplyingDomainRule
                             )
                             if engine.isApplyingDomainRule {
-                                ProgressView().scaleEffect(0.85)
+                                ProgressView().controlSize(.small)
                             }
                         }
                     }
@@ -324,7 +320,7 @@ struct SettingsView: View {
                     }
                     .disabled(engine.isSavingSettings)
                     if engine.isSavingSettings {
-                        ProgressView().scaleEffect(0.85)
+                        ProgressView().controlSize(.small)
                         Text("Saving…").font(.caption).foregroundStyle(Theme.textSecondary)
                     }
                 }
@@ -345,7 +341,6 @@ struct SettingsView: View {
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Theme.deepNavy)
         .task {
             await engine.refreshSettings()
             await engine.refreshHealth()

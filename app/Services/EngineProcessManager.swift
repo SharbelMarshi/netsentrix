@@ -23,6 +23,9 @@ final class EngineProcessManager: ObservableObject {
     @Published private(set) var state: State = .idle
 
     private var process: Process?
+    /// Write end stays open for the app's lifetime; the engine exits on EOF,
+    /// so it dies with the app even on a force kill.
+    private var lifelinePipe: Pipe?
     private var restartAttempts = 0
     private var stoppingIntentionally = false
     private var didRunAutostart = false
@@ -68,7 +71,11 @@ final class EngineProcessManager: ObservableObject {
         }
         let p = Process()
         p.executableURL = binary
-        p.environment = ProcessInfo.processInfo.environment
+        var env = ProcessInfo.processInfo.environment
+        env["NETSENTRIX_EXIT_ON_STDIN_CLOSE"] = "1"
+        p.environment = env
+        let lifeline = Pipe()
+        p.standardInput = lifeline
         if let log = Self.openLogHandle() {
             p.standardOutput = log
             p.standardError = log
@@ -86,6 +93,7 @@ final class EngineProcessManager: ObservableObject {
             return
         }
         process = p
+        lifelinePipe = lifeline
         state = .starting
         await waitUntilHealthy()
         if state == .running, let engineService {
@@ -100,7 +108,7 @@ final class EngineProcessManager: ObservableObject {
     }
 
     /// Env override → app bundle → dev builds next to the repo's `app/` cwd.
-    static func locateEngineBinary(
+    nonisolated static func locateEngineBinary(
         env: [String: String] = ProcessInfo.processInfo.environment,
         fileManager: FileManager = .default
     ) -> URL? {
@@ -123,7 +131,7 @@ final class EngineProcessManager: ObservableObject {
         return nil
     }
 
-    static var logFileURL: URL? {
+    nonisolated static var logFileURL: URL? {
         guard let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
         else { return nil }
         return dir
@@ -161,6 +169,8 @@ final class EngineProcessManager: ObservableObject {
 
     private func handleTermination(status: Int32) {
         process = nil
+        try? lifelinePipe?.fileHandleForWriting.close()
+        lifelinePipe = nil
         if stoppingIntentionally {
             stoppingIntentionally = false
             state = .stopped
@@ -186,7 +196,7 @@ final class EngineProcessManager: ObservableObject {
             fm.createFile(atPath: url.path, contents: nil)
         }
         guard let handle = try? FileHandle(forWritingTo: url) else { return nil }
-        try? handle.seekToEnd()
+        _ = try? handle.seekToEnd()
         return handle
     }
 }

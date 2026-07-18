@@ -1,8 +1,6 @@
 .DS_Store
 *.swp
 *.mmdb
-
-# App bundle output
 dist/
 CLAUDE.md
 engine/target/

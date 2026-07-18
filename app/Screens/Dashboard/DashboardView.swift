@@ -17,7 +17,6 @@ private struct NetsentrixCard<Content: View>: View {
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .fill(Theme.cardBackground)
-                .shadow(color: Color.black.opacity(0.25), radius: 6, y: 2)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
@@ -105,7 +104,6 @@ struct DashboardView: View {
             .padding(24)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Theme.deepNavy)
         .task {
             engine.retainDnsEventsWebSocket()
             defer { engine.releaseDnsEventsWebSocket() }
@@ -128,9 +126,6 @@ struct DashboardView: View {
 
     private var headerRow: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("Dashboard")
-                .font(.title2.weight(.semibold))
-                .foregroundStyle(Theme.textPrimary)
             HStack(spacing: 8) {
                 Circle()
                     .fill(engine.isEngineUnreachable ? Theme.blocked : Theme.allowed)
@@ -297,7 +292,7 @@ struct DashboardView: View {
                     .font(.headline)
                     .foregroundStyle(engineTitleColor(snap.engine))
                 if engine.isRefreshingHealth {
-                    ProgressView().scaleEffect(0.7)
+                    ProgressView().controlSize(.small)
                 }
             }
             Text(snap.dnsSummaryPrimary)

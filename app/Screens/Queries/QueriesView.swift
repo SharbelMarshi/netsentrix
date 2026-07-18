@@ -64,10 +64,6 @@ struct QueriesView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Queries")
-                .font(.title2.weight(.semibold))
-                .foregroundStyle(Theme.textPrimary)
-
             HStack(spacing: 8) {
                 Circle()
                     .fill(engine.isEngineUnreachable ? Theme.blocked : Theme.allowed)
@@ -143,7 +139,7 @@ struct QueriesView: View {
                 .disabled(domain == nil || engine.isApplyingDomainRule || engine.isEngineUnreachable)
 
                 if engine.isApplyingDomainRule {
-                    ProgressView().scaleEffect(0.85)
+                    ProgressView().controlSize(.small)
                     Text("Applying rule…").font(.caption).foregroundStyle(Theme.textSecondary)
                 }
             }
@@ -226,7 +222,6 @@ struct QueriesView: View {
         }
         .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(Theme.deepNavy)
         .onChange(of: engine.queriesDisplayRevision) { _ in rebuildTableRows() }
         .onChange(of: appModel.queriesDeviceFilterId) { _ in rebuildTableRows() }
         .onChange(of: appModel.queriesHighlightDomain) { _ in rebuildTableRows() }

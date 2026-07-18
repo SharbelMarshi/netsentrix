@@ -163,7 +163,7 @@ struct TimeOverridesSection: View {
                         }
                     }
                     .disabled(isSaving)
-                    if isSaving { ProgressView().scaleEffect(0.85) }
+                    if isSaving { ProgressView().controlSize(.small) }
                 }
             }
         }

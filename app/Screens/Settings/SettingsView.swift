@@ -36,6 +36,10 @@ struct SettingsView: View {
                     .font(.callout)
                     .foregroundStyle(Theme.textSecondary)
 
+                Text("App preferences — engine address, token file, notifications — are in NetSentrix → Settings… (⌘,).")
+                    .font(.caption)
+                    .foregroundStyle(Theme.textSecondary)
+
                 if let h = engine.lastHealth {
                     GroupBox("Runtime — from engine health") {
                         VStack(alignment: .leading, spacing: 8) {
@@ -79,8 +83,6 @@ struct SettingsView: View {
                         }
                     }
                 }
-
-                EngineConnectionSection()
 
                 dnsAnsweringGroup
 
@@ -309,8 +311,6 @@ struct SettingsView: View {
                 }
 
                 TimeOverridesSection()
-
-                NotificationsSection()
 
                 EngineDaemonSection()
 

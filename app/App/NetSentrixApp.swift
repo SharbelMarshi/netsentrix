@@ -12,6 +12,33 @@ struct NetSentrixApp: App {
                 .environmentObject(engineService)
         }
         .defaultSize(width: 1040, height: 700)
+        .commands {
+            CommandGroup(replacing: .newItem) {}
+            CommandGroup(replacing: .saveItem) {
+                Button("Export Queries as CSV…") {
+                    engineService.exportQueriesCSVUsingSavePanel()
+                }
+                .keyboardShortcut("e")
+            }
+            CommandMenu("Go") {
+                ForEach(AppDestination.allCases) { dest in
+                    Button(dest.title) {
+                        appModel.selectedDestination = dest
+                    }
+                    .keyboardShortcut(dest.commandShortcut)
+                }
+                Divider()
+                Button("Refresh") {
+                    Task { await refreshCurrentScreen() }
+                }
+                .keyboardShortcut("r")
+            }
+        }
+
+        Settings {
+            AppSettingsView()
+                .environmentObject(engineService)
+        }
 
         MenuBarExtra("NetSentrix", systemImage: menuBarSymbol) {
             MenuBarView()
@@ -24,5 +51,21 @@ struct NetSentrixApp: App {
         if h.dnsPaused == true { return "pause.circle" }
         if h.protection?.state.lowercased() == "protecting" { return "shield.fill" }
         return "shield"
+    }
+
+    private func refreshCurrentScreen() async {
+        switch appModel.selectedDestination {
+        case .dashboard, .setup:
+            await engineService.refreshAllDashboardData()
+        case .devices:
+            await engineService.refreshDevices()
+        case .queries:
+            await engineService.refreshQueries(limit: 100, deviceId: appModel.queriesDeviceFilterId)
+        case .alerts:
+            await engineService.refreshAlerts()
+        case .settings:
+            await engineService.refreshSettings()
+            await engineService.refreshHealth()
+        }
     }
 }

@@ -26,6 +26,17 @@ enum AppDestination: String, CaseIterable, Identifiable, Hashable {
         case .settings: "gearshape"
         }
     }
+
+    var commandShortcut: KeyEquivalent {
+        switch self {
+        case .dashboard: "1"
+        case .devices: "2"
+        case .queries: "3"
+        case .alerts: "4"
+        case .setup: "5"
+        case .settings: "6"
+        }
+    }
 }
 
 @MainActor

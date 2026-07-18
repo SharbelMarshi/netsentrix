@@ -33,7 +33,6 @@ struct QueriesView: View {
         selectedQueryIds = selectedQueryIds.intersection(valid)
     }
 
-    /// Live WebSocket state: green "Live", amber "Reconnecting…", gray otherwise.
     private var liveFeedBadge: some View {
         HStack(spacing: 5) {
             Circle()

@@ -1,6 +1,5 @@
 import SwiftUI
 
-/// Settings → Engine connection: API address + token file override.
 struct EngineConnectionSection: View {
     @EnvironmentObject private var engine: EngineService
     @State private var addressEdit = ""
@@ -64,7 +63,6 @@ struct EngineConnectionSection: View {
     }
 }
 
-/// Settings → Notifications: opt-in macOS notifications for new alerts.
 struct NotificationsSection: View {
     @AppStorage(AlertNotifier.enabledDefaultsKey) private var notificationsEnabled = false
 
@@ -88,7 +86,6 @@ struct NotificationsSection: View {
     }
 }
 
-/// Settings → Scheduled DNS policies (`/policy/time-overrides`).
 struct TimeOverridesSection: View {
     @EnvironmentObject private var engine: EngineService
     @State private var scopeDeviceId = ""
@@ -199,7 +196,6 @@ struct TimeOverridesSection: View {
     }
 }
 
-/// Settings → Engine process: install the embedded engine as a LaunchDaemon.
 struct EngineDaemonSection: View {
     @StateObject private var daemon = EngineDaemonManager()
 

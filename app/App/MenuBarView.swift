@@ -1,6 +1,5 @@
 import SwiftUI
 
-/// Menu bar dropdown: protection state at a glance, pause/resume, open app.
 struct MenuBarView: View {
     @EnvironmentObject private var engine: EngineService
     @Environment(\.openWindow) private var openWindow

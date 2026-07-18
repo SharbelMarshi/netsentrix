@@ -51,7 +51,6 @@ struct ProductStatusSnapshot: Sendable {
     let setupReason: String
     let setupNextStep: String?
 
-    /// User-facing engine line (e.g. "Running").
     let engineTitle: String
     /// Plain-language DNS / listener summary for primary UI.
     let dnsSummaryPrimary: String

@@ -71,11 +71,9 @@ struct HealthResponse: Codable, Sendable {
     let snifferEnabled: Bool?
     let alertsTotal: Int64?
     let apiTokenFile: String?
-    /// Resolved engine config file (same as startup).
     let configPath: String?
     /// Directory containing `api.token` / default DB layout (`.../NetSentrix`).
     let netsentrixDataDir: String?
-    /// Active SQLite path from config.
     let dbPath: String?
     /// Newest **LAN** `dns_queries` timestamp (non-loopback `device_id` only), if any.
     let lastClientQueryMs: Int64?

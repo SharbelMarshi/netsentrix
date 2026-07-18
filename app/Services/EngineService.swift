@@ -15,13 +15,9 @@ final class EngineService: ObservableObject {
     @Published private(set) var lastInsights: InsightsDailyDTO?
     @Published private(set) var insightsFetchError: String?
 
-    /// Set when `GET /health` fails after an attempt (engine unreachable).
     @Published private(set) var healthFetchError: String?
-    /// Set when `GET /stats` fails.
     @Published private(set) var statsFetchError: String?
-    /// Set when `GET /queries` fails.
     @Published private(set) var queriesFetchError: String?
-    /// Set when `GET /alerts` fails (kept separate from `lastOperationError` for mutations).
     @Published private(set) var alertsFetchError: String?
 
     /// Bumps when REST `queries` or live WebSocket rows change — drives stable Queries table updates.
@@ -66,22 +62,11 @@ final class EngineService: ObservableObject {
     @Published private(set) var hasCompletedInitialDevicesFetch = false
     @Published private(set) var hasCompletedInitialAlertsFetch = false
 
-    /// Last mutation / auxiliary endpoint error (settings, devices, alerts).
     @Published private(set) var lastOperationError: String?
-
-    /// Shown after a successful POST `/block` or `/allow` (Queries + Settings).
     @Published private(set) var lastDomainRuleSuccess: String?
-
-    /// Shown after a successful device rename, DNS policy change, or tags save.
     @Published private(set) var lastDeviceControlSuccess: String?
-
-    /// True while PATCH `/devices/:id` is in flight (rename, policy, or tags).
     @Published private(set) var isApplyingDeviceChange = false
-
-    /// True while POST `/settings`, `/reload`, or DNS pause/resume is in flight.
     @Published private(set) var isSavingSettings = false
-
-    /// True while POST `/block` or `/allow` is in flight.
     @Published private(set) var isApplyingDomainRule = false
 
     @Published private(set) var timeOverrides: [TimeOverrideDTO] = []
@@ -108,7 +93,6 @@ final class EngineService: ObservableObject {
         }
     }
 
-    /// True after first health attempt and engine appears unreachable.
     var isEngineUnreachable: Bool {
         hasCompletedInitialHealthFetch && lastHealth == nil && healthFetchError != nil
     }
@@ -333,7 +317,6 @@ final class EngineService: ObservableObject {
         }
     }
 
-    /// Latest device row + query stats (`GET /devices/:id`). Returns nil on failure (`lastOperationError` set).
     func fetchDevice(id: String) async -> DeviceDTO? {
         lastOperationError = nil
         do {
@@ -364,7 +347,6 @@ final class EngineService: ObservableObject {
         }
     }
 
-    /// Adds a scheduled DNS-policy window and refreshes the list.
     func addTimeOverride(scopeDeviceId: String?, startMin: Int, endMin: Int, dnsPolicy: String) async {
         lastOperationError = nil
         do {
@@ -399,7 +381,6 @@ final class EngineService: ObservableObject {
         }
     }
 
-    /// Health + stats + a small query sample for dashboard “last query” row.
     func refreshAllDashboardData() async {
         isRefreshingDashboard = true
         defer { isRefreshingDashboard = false }
@@ -421,7 +402,6 @@ final class EngineService: ObservableObject {
         }
     }
 
-    /// Saves `queries/export.csv` via a save panel (G14).
     func exportQueriesCSVUsingSavePanel() {
         lastOperationError = nil
         Task {
@@ -481,7 +461,6 @@ final class EngineService: ObservableObject {
         )
     }
 
-    /// Saves static block/allow list file paths (engine merges into the live filter).
     func saveBlocklistAllowlistPaths(blocklist: [String], allowlist: [String]) async {
         await saveSettingsPatch(
             SettingsDnsPatch(
@@ -494,7 +473,6 @@ final class EngineService: ObservableObject {
         )
     }
 
-    /// Reload `config.toml` from disk (e.g. manual edits); refreshes in-memory settings + health.
     func reloadConfigFromDisk() async {
         lastOperationError = nil
         isSavingSettings = true
@@ -605,12 +583,10 @@ final class EngineService: ObservableObject {
         lastDomainRuleSuccess = nil
     }
 
-    /// POST `/block` with normalized domain; engine reloads filter immediately.
     func blockDomain(_ raw: String) async {
         await applyDomainRule(raw: raw, allow: false)
     }
 
-    /// POST `/allow` with normalized domain; allowlist wins over blocks for new lookups.
     func allowDomain(_ raw: String) async {
         await applyDomainRule(raw: raw, allow: true)
     }

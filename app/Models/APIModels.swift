@@ -127,7 +127,7 @@ struct DeviceDTO: Decodable, Identifiable, Sendable {
     let effectiveDnsPolicy: String
     /// True when a `dns_time_overrides` row applies to this device at engine local wall time.
     let scheduleOverrideActive: Bool
-    /// Comma-separated operator tags (FG4).
+    /// Comma-separated operator tags.
     let tags: String
 
     enum CodingKeys: String, CodingKey {

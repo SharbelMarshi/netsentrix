@@ -129,7 +129,7 @@ struct EngineAPIClient: Sendable {
         return data
     }
 
-    /// `POST /feedback/domain` — user “safe” / “suspicious” for classifier merge (FG3).
+    /// `POST /feedback/domain` — user “safe” / “suspicious” verdicts merged into the classifier.
     func postDomainFeedback(pattern: String, verdict: String) async throws {
         struct B: Encodable {
             let pattern: String
@@ -164,7 +164,6 @@ struct EngineAPIClient: Sendable {
         try await postJSONExpectOk(url: baseURL.appendingPathComponent("dns/pause", isDirectory: false), body: EmptyJSON())
     }
 
-    /// Idempotent: resume normal filtered DNS.
     func postDnsResume() async throws {
         try await postJSONExpectOk(url: baseURL.appendingPathComponent("dns/resume", isDirectory: false), body: EmptyJSON())
     }
@@ -237,7 +236,6 @@ struct EngineAPIClient: Sendable {
         )
     }
 
-    /// `DELETE /policy/time-overrides/:id`.
     func deleteTimeOverride(id: Int64) async throws {
         let url = baseURL
             .appendingPathComponent("policy/time-overrides", isDirectory: false)

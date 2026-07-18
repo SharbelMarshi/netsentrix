@@ -17,6 +17,7 @@ let package = Package(
                 "App/RootView.swift",
                 "App/Theme.swift",
                 "App/MenuBarView.swift",
+                "App/AppSettingsView.swift",
                 "Screens/Dashboard/DashboardView.swift",
                 "Screens/Devices/DevicesView.swift",
                 "Screens/Queries/QueriesView.swift",

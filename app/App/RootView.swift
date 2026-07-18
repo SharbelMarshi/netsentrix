@@ -1,6 +1,5 @@
 import SwiftUI
 
-/// macOS shell: sidebar (system-style) + detail — minimal scaffold.
 struct RootView: View {
     @EnvironmentObject private var appModel: AppViewModel
 

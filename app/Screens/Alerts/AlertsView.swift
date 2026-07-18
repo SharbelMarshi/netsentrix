@@ -11,10 +11,6 @@ struct AlertsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Button("Refresh") {
-                Task { await engine.refreshAlerts() }
-            }
-
             if engine.hasCompletedInitialAlertsFetch, engine.alerts.isEmpty {
                 if let err = engine.alertsFetchError {
                     Text(err)
